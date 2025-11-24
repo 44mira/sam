@@ -3,7 +3,7 @@ name = "sam"
 version = "0.1.0"
 edition = "2024"
 
-[build-dependecies]
+[build-dependencies]
 cc="*"
 
 [dependencies]
