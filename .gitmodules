@@ -1,0 +1,3 @@
+[submodule "tree-sitter-sam"]
+	path = tree-sitter-sam
+	url = https://github.com/44mira/tree-sitter-sam.git
