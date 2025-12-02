@@ -1,3 +1,6 @@
+mod evaluate;
+
+use evaluate::evaluate;
 use tree_sitter::{Language, Parser};
 
 // retrieve Language struct from C code
@@ -11,13 +14,13 @@ fn main() {
   let mut parser = Parser::new();
   parser.set_language(&language).unwrap();
 
-  let mut input = String::new();
+  let text = "let a = 4;";
 
-  println!("Input source code:");
-  std::io::stdin().read_line(&mut input).unwrap();
-
-  let tree = parser.parse(input, None).unwrap();
+  let tree = parser.parse(text, None).unwrap();
   let root = tree.root_node();
 
-  println!("{}", root.to_sexp());
+  match evaluate(&root, text.as_bytes()) {
+    Ok(msg) => println!("{msg}"),
+    Err(msg) => println!("{msg}"),
+  };
 }
