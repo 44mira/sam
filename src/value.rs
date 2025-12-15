@@ -1,14 +1,155 @@
 #![allow(dead_code)]
 
-// TODO: add string and functions
-#[derive(Debug)]
+use std::ops::*;
+
+// TODO: Add string and functions
+#[derive(Debug, Clone, Copy)]
 pub enum Value {
   SamNumber(Number),
   Undefined,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Number {
   SamInt(i64),
   SamFloat(f64),
+}
+
+/* =========================
+Number arithmetic
+========================= */
+
+impl Number {
+  fn as_f64(self) -> f64 {
+    match self {
+      Number::SamInt(i) => i as f64,
+      Number::SamFloat(f) => f,
+    }
+  }
+}
+
+impl Add for Number {
+  type Output = Number;
+
+  fn add(self, rhs: Number) -> Number {
+    match (self, rhs) {
+      (Number::SamInt(a), Number::SamInt(b)) => Number::SamInt(a + b),
+      (a, b) => Number::SamFloat(a.as_f64() + b.as_f64()),
+    }
+  }
+}
+
+impl Sub for Number {
+  type Output = Number;
+
+  fn sub(self, rhs: Number) -> Number {
+    match (self, rhs) {
+      (Number::SamInt(a), Number::SamInt(b)) => Number::SamInt(a - b),
+      (a, b) => Number::SamFloat(a.as_f64() - b.as_f64()),
+    }
+  }
+}
+
+impl Mul for Number {
+  type Output = Number;
+
+  fn mul(self, rhs: Number) -> Number {
+    match (self, rhs) {
+      (Number::SamInt(a), Number::SamInt(b)) => Number::SamInt(a * b),
+      (a, b) => Number::SamFloat(a.as_f64() * b.as_f64()),
+    }
+  }
+}
+
+impl Div for Number {
+  type Output = Number;
+
+  fn div(self, rhs: Number) -> Number {
+    Number::SamFloat(self.as_f64() / rhs.as_f64())
+  }
+}
+
+/* =========================
+Value arithmetic
+========================= */
+
+impl Add for Value {
+  type Output = Value;
+
+  fn add(self, rhs: Value) -> Value {
+    match (self, rhs) {
+      (Value::SamNumber(a), Value::SamNumber(b)) => Value::SamNumber(a + b),
+      _ => Value::Undefined,
+    }
+  }
+}
+
+impl Sub for Value {
+  type Output = Value;
+
+  fn sub(self, rhs: Value) -> Value {
+    match (self, rhs) {
+      (Value::SamNumber(a), Value::SamNumber(b)) => Value::SamNumber(a - b),
+      _ => Value::Undefined,
+    }
+  }
+}
+
+impl Mul for Value {
+  type Output = Value;
+
+  fn mul(self, rhs: Value) -> Value {
+    match (self, rhs) {
+      (Value::SamNumber(a), Value::SamNumber(b)) => Value::SamNumber(a * b),
+      _ => Value::Undefined,
+    }
+  }
+}
+
+impl Div for Value {
+  type Output = Value;
+
+  fn div(self, rhs: Value) -> Value {
+    match (self, rhs) {
+      (Value::SamNumber(a), Value::SamNumber(b)) => Value::SamNumber(a / b),
+      _ => Value::Undefined,
+    }
+  }
+}
+
+/* =========================
+Number modulo
+========================= */
+
+impl Rem for Number {
+  type Output = Number;
+
+  fn rem(self, rhs: Number) -> Number {
+    match (self, rhs) {
+      (Number::SamInt(a), Number::SamInt(b)) => Number::SamInt(a % b),
+      (a, b) => Number::SamFloat(a.as_f64().rem_euclid(b.as_f64())),
+    }
+  }
+}
+
+/* =========================
+Value modulo
+========================= */
+
+impl Rem for Value {
+  type Output = Value;
+
+  fn rem(self, rhs: Value) -> Value {
+    match (self, rhs) {
+      (Value::SamNumber(a), Value::SamNumber(b)) => {
+        // Explicit zero check
+        match b {
+          Number::SamInt(0) => Value::Undefined,
+          Number::SamFloat(f) if f == 0.0 => Value::Undefined,
+          _ => Value::SamNumber(a % b),
+        }
+      }
+      _ => Value::Undefined,
+    }
+  }
 }
