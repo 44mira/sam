@@ -1,20 +1,8 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use crate::context::Context;
+use crate::value::{Number, Value};
 use tree_sitter::Node;
-
-// TODO: add string and functions
-#[derive(Debug)]
-enum Value {
-  SamNumber(Number),
-  Undefined,
-}
-
-#[derive(Debug)]
-enum Number {
-  SamInt(i64),
-  SamFloat(f64),
-}
 
 pub fn evaluate(root: &Node, source: &[u8]) -> Result<String, String> {
   if root.kind() != "source_file" {
@@ -25,22 +13,22 @@ pub fn evaluate(root: &Node, source: &[u8]) -> Result<String, String> {
   }
 
   // the variable table/environment, to be passed around as mutable reference
-  let mut env: HashMap<String, Value> = HashMap::new();
+  let mut ctx = Context::new();
 
   // TODO: handle interface
   let mut walker = root.walk();
   for child in root.named_children(&mut walker) {
-    evaluate_statement(child, &mut env, source)?;
+    evaluate_statement(child, &mut ctx, source)?;
   }
 
-  println!("{:#?}", env);
+  println!("{:#?}", ctx);
 
   return Ok("Evaluation successful".to_owned());
 }
 
 fn evaluate_statement(
   node: Node,
-  env: &mut HashMap<String, Value>,
+  ctx: &mut Context,
   source: &[u8],
 ) -> Result<(), String> {
   // TODO: add other statement types
@@ -49,10 +37,10 @@ fn evaluate_statement(
       evaluate_expression(node.child(0).unwrap(), source)?;
     }
     "variable_declaration" => {
-      evaluate_variable_declaration(node, env, source)?;
+      evaluate_variable_declaration(node, ctx, source)?;
     }
     "assignment" => {
-      evaluate_assignment(node, env, source)?;
+      evaluate_assignment(node, ctx, source)?;
     }
     _ => {
       return Err(format!(
@@ -67,7 +55,7 @@ fn evaluate_statement(
 
 fn evaluate_assignment(
   node: Node,
-  env: &mut HashMap<String, Value>,
+  ctx: &mut Context,
   source: &[u8],
 ) -> Result<(), String> {
   if node.kind() != "assignment" {
@@ -84,13 +72,13 @@ fn evaluate_assignment(
     evaluate_expression(node.child_by_field_name("rhs").unwrap(), source)?;
 
   // assign value to existing key
-  if !env.contains_key(&lhs) {
+  if !ctx.env.contains_key(&lhs) {
     return Err(format!(
       "Assigning to non-existent variable. {:#?}",
       node.range()
     ));
   }
-  env.entry(lhs).insert_entry(rhs);
+  ctx.env.entry(lhs).insert_entry(rhs);
 
   return Ok(());
 }
@@ -108,7 +96,7 @@ fn evaluate_expression(node: Node, source: &[u8]) -> Result<Value, String> {
 
 fn evaluate_variable_declaration(
   node: Node,
-  env: &mut HashMap<String, Value>,
+  ctx: &mut Context,
   source: &[u8],
 ) -> Result<(), String> {
   if node.kind() != "variable_declaration" {
@@ -120,7 +108,7 @@ fn evaluate_variable_declaration(
 
   let mut walker = node.walk();
   for declarator in node.named_children(&mut walker) {
-    evaluate_variable_declarator(declarator, env, source)?;
+    evaluate_variable_declarator(declarator, ctx, source)?;
   }
 
   return Ok(());
@@ -128,7 +116,7 @@ fn evaluate_variable_declaration(
 
 fn evaluate_variable_declarator(
   node: Node,
-  env: &mut HashMap<String, Value>,
+  ctx: &mut Context,
   source: &[u8],
 ) -> Result<(), String> {
   if node.kind() != "variable_declarator" {
@@ -142,12 +130,12 @@ fn evaluate_variable_declarator(
   let ident =
     evaluate_identifier(node.child_by_field_name("variable").unwrap(), source)?;
 
-  // create var in env and optionally set value
-  env.insert(ident.to_owned(), Value::Undefined);
+  // create var in ctx and optionally set value
+  ctx.env.insert(ident.to_owned(), Value::Undefined);
 
   if let Some(value) = node.child_by_field_name("value") {
     let v = evaluate_expression(value, source)?;
-    env.entry(ident).insert_entry(v);
+    ctx.env.entry(ident).insert_entry(v);
   }
 
   return Ok(());

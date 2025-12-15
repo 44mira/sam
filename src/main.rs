@@ -1,4 +1,6 @@
+mod context;
 mod evaluate;
+mod value;
 
 use evaluate::evaluate;
 use tree_sitter::{Language, Parser};
