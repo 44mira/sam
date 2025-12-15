@@ -14,7 +14,7 @@ fn main() {
   let mut parser = Parser::new();
   parser.set_language(&language).unwrap();
 
-  let text = "let a = 4;";
+  let text = "let a = 4;\na = 5;";
 
   let tree = parser.parse(text, None).unwrap();
   let root = tree.root_node();

@@ -51,6 +51,9 @@ fn evaluate_statement(
     "variable_declaration" => {
       evaluate_variable_declaration(node, env, source)?;
     }
+    "assignment" => {
+      evaluate_assignment(node, env, source)?;
+    }
     _ => {
       return Err(format!(
         "Unknown statement encountered. {:#?}",
@@ -58,6 +61,36 @@ fn evaluate_statement(
       ));
     }
   }
+
+  return Ok(());
+}
+
+fn evaluate_assignment(
+  node: Node,
+  env: &mut HashMap<String, Value>,
+  source: &[u8],
+) -> Result<(), String> {
+  if node.kind() != "assignment" {
+    return Err(format!(
+      "Variable assignment node expected but not found. {:#?}",
+      node.range()
+    ));
+  }
+
+  let lhs =
+    evaluate_identifier(node.child_by_field_name("lhs").unwrap(), source)?;
+
+  let rhs =
+    evaluate_expression(node.child_by_field_name("rhs").unwrap(), source)?;
+
+  // assign value to existing key
+  if !env.contains_key(&lhs) {
+    return Err(format!(
+      "Assigning to non-existent variable. {:#?}",
+      node.range()
+    ));
+  }
+  env.entry(lhs).insert_entry(rhs);
 
   return Ok(());
 }
