@@ -99,6 +99,19 @@ fn evaluate_expression(
   return match node.kind() {
     "literal" => evaluate_literal(node, source),
     "binary_expression" => evaluate_binary_expression(node, ctx, source),
+    "identifier" => {
+      let varname = evaluate_identifier(node, source)?;
+
+      let Some(value) = ctx.env.get(&varname).cloned() else {
+        return Err(format!(
+          "Variable {} not defined. {:#?}",
+          varname,
+          node.range()
+        ));
+      };
+
+      return Ok(value);
+    }
     _ => Err(format!(
       "Unknown expression encountered. {:#?}",
       node.range()
