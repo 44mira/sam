@@ -150,6 +150,12 @@ fn evaluate_binary_expression(
     "/" => left / right,
     "%" => left % right,
     "-" => left - right,
+    "<" => (left < right).into(),
+    ">" => (left > right).into(),
+    "==" => (left == right).into(),
+    "<=" => (left <= right).into(),
+    ">=" => (left >= right).into(),
+    "!=" => (left != right).into(),
     _ => {
       return Err(format!("Unknown operator encountered. {:#?}", node.range()));
     }
@@ -199,6 +205,34 @@ fn evaluate_variable_declarator(
     let v = evaluate_expression(value, ctx, source)?;
     ctx.env.entry(ident).insert_entry(v);
   }
+
+  return Ok(());
+}
+
+fn evaluate_if_expression(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<(), String> {
+  expect_node(
+    &node,
+    "if_expression",
+    "If expression node expected but not found.",
+  )?;
+
+  return Ok(());
+}
+
+fn evaluate_statement_block(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<(), String> {
+  expect_node(
+    &node,
+    "statement_block",
+    "Statement block node expected but not found.",
+  )?;
 
   return Ok(());
 }

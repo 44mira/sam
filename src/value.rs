@@ -153,3 +153,55 @@ impl Rem for Value {
     }
   }
 }
+
+// We are limited to only using PartialEq and PartialOrd due to utilizing f64
+// as the internal value.
+
+/* =========================
+From helper conversions
+========================= */
+
+impl From<bool> for Value {
+  fn from(b: bool) -> Self {
+    Value::SamNumber(Number::SamInt(if b { 1 } else { 0 }))
+  }
+}
+
+/* =========================
+Number comparison
+========================= */
+
+impl PartialEq for Number {
+  fn eq(&self, other: &Self) -> bool {
+    self.as_f64() == other.as_f64()
+  }
+}
+
+impl PartialOrd for Number {
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    self.as_f64().partial_cmp(&other.as_f64())
+  }
+}
+
+/* =========================
+Value comparison
+========================= */
+
+impl PartialEq for Value {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Value::SamNumber(a), Value::SamNumber(b)) => a == b,
+      (Value::Undefined, Value::Undefined) => true,
+      _ => false,
+    }
+  }
+}
+
+impl PartialOrd for Value {
+  fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    match (self, other) {
+      (Value::SamNumber(a), Value::SamNumber(b)) => a.partial_cmp(b),
+      _ => None,
+    }
+  }
+}
