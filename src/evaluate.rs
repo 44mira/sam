@@ -78,14 +78,14 @@ fn evaluate_assignment(
   let rhs =
     evaluate_expression(node.child_by_field_name("rhs").unwrap(), ctx, source)?;
 
-  // assign value to existing key
-  if !ctx.env.contains_key(&lhs) {
+  // assign value to existing key in the call stack
+  let Some(var) = ctx.search_in_stack(&lhs) else {
     return Err(format!(
       "Assigning to non-existent variable. {:#?}",
       node.range()
     ));
-  }
-  ctx.env.entry(lhs).insert_entry(rhs);
+  };
+  *var = rhs;
 
   return Ok(());
 }
@@ -102,7 +102,7 @@ fn evaluate_expression(
     "identifier" => {
       let varname = evaluate_identifier(node, source)?;
 
-      let Some(value) = ctx.env.get(&varname).cloned() else {
+      let Some(var) = ctx.search_in_stack(&varname) else {
         return Err(format!(
           "Variable {} not defined. {:#?}",
           varname,
@@ -110,7 +110,8 @@ fn evaluate_expression(
         ));
       };
 
-      return Ok(value);
+      // create a new copy for return
+      return Ok(var.clone());
     }
     _ => Err(format!(
       "Unknown expression encountered. {:#?}",
@@ -198,12 +199,18 @@ fn evaluate_variable_declarator(
   let ident =
     evaluate_identifier(node.child_by_field_name("variable").unwrap(), source)?;
 
-  // create var in ctx and optionally set value
-  ctx.env.insert(ident.to_owned(), Value::Undefined);
+  // evaluate lhs (if it exists)
+  let value = node
+    .child_by_field_name("value")
+    .map(|n| evaluate_expression(n, ctx, source))
+    .transpose()?;
 
-  if let Some(value) = node.child_by_field_name("value") {
-    let v = evaluate_expression(value, ctx, source)?;
-    ctx.env.entry(ident).insert_entry(v);
+  // assign to current scope
+  let scope = ctx.current_scope();
+  let entry = scope.entry(ident.to_owned()).or_insert(Value::Undefined);
+
+  if let Some(v) = value {
+    *entry = v;
   }
 
   return Ok(());
@@ -211,8 +218,8 @@ fn evaluate_variable_declarator(
 
 fn evaluate_if_expression(
   node: Node,
-  ctx: &mut Context,
-  source: &[u8],
+  _ctx: &mut Context,
+  _source: &[u8],
 ) -> Result<(), String> {
   expect_node(
     &node,
@@ -225,8 +232,8 @@ fn evaluate_if_expression(
 
 fn evaluate_statement_block(
   node: Node,
-  ctx: &mut Context,
-  source: &[u8],
+  _ctx: &mut Context,
+  _source: &[u8],
 ) -> Result<(), String> {
   expect_node(
     &node,

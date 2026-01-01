@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::value::Value;
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::HashMap;
 
 type SymbolTable = HashMap<String, Value>;
 
@@ -14,9 +14,14 @@ pub struct Context {
 
 impl Context {
   pub fn new() -> Self {
-    return Context {
+    let mut ctx = Context {
       call_stack: Vec::new(),
     };
+
+    // create global scope
+    ctx.init_scope();
+
+    return ctx;
   }
 
   pub fn depth(&self) -> usize {
@@ -24,23 +29,37 @@ impl Context {
     return self.call_stack.len();
   }
 
-  pub fn search_in_stack(
-    &mut self,
-    varname: &String,
-  ) -> Option<Entry<String, Value>> {
+  pub fn search_in_stack(&mut self, varname: &String) -> Option<&mut Value> {
     // find the first entry from the top of the stack that matches the variable
     // name (lexical scoping)
 
     let reverse_iter = self.call_stack.iter_mut().rev();
 
+    // we check through entire call stack before declaring none
     for table in reverse_iter {
       if !table.contains_key(varname) {
         continue;
       }
 
-      return Some(table.entry(varname.to_owned()));
+      return table.get_mut(varname);
     }
 
     return None;
+  }
+
+  // create a new scope for the call stack
+  pub fn init_scope(&mut self) {
+    let new_scope: SymbolTable = HashMap::new();
+
+    self.call_stack.push(new_scope);
+  }
+
+  // destroy the topmost scope, popping it off the call stack
+  pub fn destroy_scope(&mut self) {
+    self.call_stack.pop();
+  }
+
+  pub fn current_scope(&mut self) -> &mut SymbolTable {
+    return self.call_stack.last_mut().unwrap();
   }
 }
