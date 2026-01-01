@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
-use std::ops::*;
+use std::ops::{Range, *};
 
 // TODO: Add string and functions
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Value {
   SamNumber(Number),
+  // byte range of function for lazy evaluation
+  SamFunction(Range<usize>),
   Undefined,
 }
 
@@ -203,5 +205,98 @@ impl PartialOrd for Value {
       (Value::SamNumber(a), Value::SamNumber(b)) => a.partial_cmp(b),
       _ => None,
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /* =========================
+     Number arithmetic
+  ========================= */
+
+  #[test]
+  fn test_number_add_int() {
+    let a = Number::SamInt(2);
+    let b = Number::SamInt(3);
+    assert_eq!(a + b, Number::SamInt(5));
+  }
+
+  #[test]
+  fn test_number_add_float() {
+    let a = Number::SamInt(2);
+    let b = Number::SamFloat(0.5);
+    assert_eq!(a + b, Number::SamFloat(2.5));
+  }
+
+  #[test]
+  fn test_number_mul() {
+    let a = Number::SamInt(4);
+    let b = Number::SamInt(5);
+    assert_eq!(a * b, Number::SamInt(20));
+  }
+
+  #[test]
+  fn test_number_div() {
+    let a = Number::SamInt(5);
+    let b = Number::SamInt(2);
+    assert_eq!(a / b, Number::SamFloat(2.5));
+  }
+
+  #[test]
+  fn test_number_rem() {
+    let a = Number::SamInt(7);
+    let b = Number::SamInt(4);
+    assert_eq!(a % b, Number::SamInt(3));
+  }
+
+  /* =========================
+     Value arithmetic
+  ========================= */
+
+  #[test]
+  fn test_value_add() {
+    let a = Value::SamNumber(Number::SamInt(1));
+    let b = Value::SamNumber(Number::SamInt(2));
+    assert_eq!(a + b, Value::SamNumber(Number::SamInt(3)));
+  }
+
+  #[test]
+  fn test_value_add_invalid() {
+    let a = Value::Undefined;
+    let b = Value::SamNumber(Number::SamInt(2));
+    assert_eq!(a + b, Value::Undefined);
+  }
+
+  #[test]
+  fn test_value_rem_div_by_zero() {
+    let a = Value::SamNumber(Number::SamInt(5));
+    let b = Value::SamNumber(Number::SamInt(0));
+    assert_eq!(a % b, Value::Undefined);
+  }
+
+  /* =========================
+     Comparisons
+  ========================= */
+
+  #[test]
+  fn test_value_eq() {
+    let a = Value::SamNumber(Number::SamInt(3));
+    let b = Value::SamNumber(Number::SamFloat(3.0));
+    assert_eq!(a, b);
+  }
+
+  #[test]
+  fn test_value_ord() {
+    let a = Value::SamNumber(Number::SamInt(1));
+    let b = Value::SamNumber(Number::SamInt(2));
+    assert!(a < b);
+  }
+
+  #[test]
+  fn test_bool_into_value() {
+    let v: Value = true.into();
+    assert_eq!(v, Value::SamNumber(Number::SamInt(1)));
   }
 }

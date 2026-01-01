@@ -1,21 +1,25 @@
 #![allow(dead_code)]
 
+use tree_sitter::Tree;
+
 use crate::value::Value;
 use std::collections::HashMap;
 
 type SymbolTable = HashMap<String, Value>;
 
 #[derive(Debug)]
-pub struct Context {
+pub struct Context<'a> {
   // pub env: HashMap<String, Value>,
   // pub scope_env: Option<HashMap<String, Value>>,
   pub call_stack: Vec<SymbolTable>,
+  pub tree: &'a Tree,
 }
 
-impl Context {
-  pub fn new() -> Self {
+impl<'a> Context<'a> {
+  pub fn new(tree: &'a Tree) -> Context<'a> {
     let mut ctx = Context {
       call_stack: Vec::new(),
+      tree,
     };
 
     // create global scope

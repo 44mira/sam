@@ -17,18 +17,13 @@ fn main() {
   parser.set_language(&language).unwrap();
 
   let text = r#"
-    let a = 6, b = 4;
-
-    if (4 == 4) {
-      let a = 5;
-      b = a + b;
-    };
-    "#;
+        let f = () => { return 42; };
+        f();"#;
 
   let tree = parser.parse(text, None).unwrap();
-  let root = tree.root_node();
+  let root = &tree.root_node();
 
-  match evaluate(&root, text.as_bytes()) {
+  match evaluate(&root, text.as_bytes(), &tree) {
     Ok(msg) => println!("{msg}"),
     Err(msg) => println!("{msg}"),
   };

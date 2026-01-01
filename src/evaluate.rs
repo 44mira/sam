@@ -2,7 +2,7 @@
 
 use crate::context::Context;
 use crate::value::{Number, Value};
-use tree_sitter::Node;
+use tree_sitter::{Node, Tree};
 
 fn expect_node(
   node: &Node,
@@ -16,7 +16,11 @@ fn expect_node(
   return Ok(());
 }
 
-pub fn evaluate(root: &Node, source: &[u8]) -> Result<String, String> {
+pub fn evaluate(
+  root: &Node,
+  source: &[u8],
+  tree: &Tree,
+) -> Result<String, String> {
   expect_node(
     root,
     "source_file",
@@ -24,7 +28,7 @@ pub fn evaluate(root: &Node, source: &[u8]) -> Result<String, String> {
   )?;
 
   // the variable table/environment, to be passed around as mutable reference
-  let mut ctx = Context::new();
+  let mut ctx = Context::new(&tree);
 
   // TODO: handle interface
   let mut walker = root.walk();
@@ -84,7 +88,7 @@ fn evaluate_assignment(
       node.range()
     ));
   };
-  *var = rhs;
+  *var = rhs.clone();
 
   return Ok(rhs);
 }
@@ -99,6 +103,8 @@ fn evaluate_expression(
     "literal" => evaluate_literal(node, source),
     "binary_expression" => evaluate_binary_expression(node, ctx, source),
     "if_expression" => evaluate_if_expression(node, ctx, source),
+    "lambda_expression" => evaluate_lambda_expression(node, ctx, source),
+    "call_expression" => evaluate_call_expression(node, ctx, source),
     "identifier" => {
       let varname = evaluate_identifier(node, source)?;
 
@@ -253,7 +259,7 @@ fn evaluate_if_expression(
     )?;
   } else if let Some(else_arm) = node.child_by_field_name("else") {
     value = match else_arm.kind() {
-      "statement_block" => evaluate_expression(else_arm, ctx, source)?,
+      "statement_block" => evaluate_statement_block(else_arm, ctx, source)?,
       "if_expression" => evaluate_if_expression(else_arm, ctx, source)?,
       _ => {
         return Err(format!(
@@ -265,6 +271,59 @@ fn evaluate_if_expression(
   }
 
   return Ok(value);
+}
+
+fn evaluate_lambda_expression(
+  node: Node,
+  _ctx: &mut Context,
+  _source: &[u8],
+) -> Result<Value, String> {
+  expect_node(
+    &node,
+    "lambda_expression",
+    "Lambda expression node expected but not found.",
+  )?;
+
+  let range = node.child_by_field_name("body").unwrap().byte_range();
+
+  return Ok(Value::SamFunction(range));
+}
+
+fn evaluate_call_expression(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<Value, String> {
+  expect_node(
+    &node,
+    "call_expression",
+    "Call expression node expected but not found.",
+  )?;
+
+  let Value::SamFunction(func) = evaluate_expression(
+    node.child_by_field_name("function").unwrap(),
+    ctx,
+    source,
+  )?
+  else {
+    return Err(format!(
+      "Expected function expression but not found. {:#?}",
+      node.range()
+    ));
+  };
+
+  let body_node = ctx
+    .tree
+    .root_node()
+    .descendant_for_byte_range(func.start, func.end)
+    .ok_or(format!(
+      "Expected function body but not found. {:#?}",
+      node.range()
+    ))?;
+
+  let value = evaluate_statement_block(body_node, ctx, source);
+
+  return value;
 }
 
 fn evaluate_statement_block(
@@ -287,15 +346,13 @@ fn evaluate_statement_block(
 
   for statement in node.named_children(&mut walker) {
     if statement.kind() == "return_statement" {
-      value = evaluate_return_statement(node, ctx, source)?;
+      value = evaluate_return_statement(statement, ctx, source)?;
 
       break;
     }
 
     evaluate_statement(statement, ctx, source)?;
   }
-
-  println!("{:#?}", ctx);
 
   ctx.destroy_scope();
 
@@ -367,4 +424,68 @@ fn evaluate_number(node: Node, source: &[u8]) -> Result<Number, String> {
   }
 
   return Ok(parsed);
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use tree_sitter::{Language, Parser};
+
+  // retrieve Language struct from C code
+  unsafe extern "C" {
+    fn tree_sitter_sam() -> Language;
+  }
+
+  fn get_parser() -> Parser {
+    let language = unsafe { tree_sitter_sam() };
+    let mut parser = Parser::new();
+    parser.set_language(&language).unwrap();
+
+    return parser;
+  }
+
+  #[test]
+  fn test_simple_expression() {
+    let source = b"1 + 2;";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+  }
+
+  #[test]
+  fn test_variable_assignment() {
+    let source = b"
+        let x = 5;
+        x = x + 1;
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+  }
+
+  #[test]
+  fn test_lambda_call() {
+    let source = b"
+        let f = () => { return 42; };
+        f();
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+  }
 }
