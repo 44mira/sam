@@ -41,31 +41,30 @@ fn evaluate_statement(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<(), String> {
+) -> Result<Value, String> {
   // TODO: add other statement types
-  match node.kind() {
+  let value = match node.kind() {
     "expression_statement" => {
-      evaluate_expression(node.child(0).unwrap(), ctx, source)?;
+      evaluate_expression(node.child(0).unwrap(), ctx, source)?
     }
-    "variable_declaration" => {
-      evaluate_variable_declaration(node, ctx, source)?;
-    }
-    "assignment" => {
-      evaluate_assignment(node, ctx, source)?;
-    }
+    "variable_declaration" => evaluate_variable_declaration(node, ctx, source)?,
+    "assignment" => evaluate_assignment(node, ctx, source)?,
     _ => {
-      expect_node(&node, "", "Unknown statement encountered.")?;
+      return Err(format!(
+        "Unknown statement encountered. {:#?}",
+        node.range()
+      ));
     }
-  }
+  };
 
-  return Ok(());
+  return Ok(value);
 }
 
 fn evaluate_assignment(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<(), String> {
+) -> Result<Value, String> {
   expect_node(
     &node,
     "assignment",
@@ -87,7 +86,7 @@ fn evaluate_assignment(
   };
   *var = rhs;
 
-  return Ok(());
+  return Ok(rhs);
 }
 
 fn evaluate_expression(
@@ -99,6 +98,7 @@ fn evaluate_expression(
   return match node.kind() {
     "literal" => evaluate_literal(node, source),
     "binary_expression" => evaluate_binary_expression(node, ctx, source),
+    "if_expression" => evaluate_if_expression(node, ctx, source),
     "identifier" => {
       let varname = evaluate_identifier(node, source)?;
 
@@ -169,7 +169,7 @@ fn evaluate_variable_declaration(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<(), String> {
+) -> Result<Value, String> {
   expect_node(
     &node,
     "variable_declaration",
@@ -181,7 +181,8 @@ fn evaluate_variable_declaration(
     evaluate_variable_declarator(declarator, ctx, source)?;
   }
 
-  return Ok(());
+  // TODO: Could be set to return the rhs of one declarator instead, but idgaf at this point
+  return Ok(Value::Undefined);
 }
 
 fn evaluate_variable_declarator(
@@ -218,30 +219,104 @@ fn evaluate_variable_declarator(
 
 fn evaluate_if_expression(
   node: Node,
-  _ctx: &mut Context,
-  _source: &[u8],
-) -> Result<(), String> {
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<Value, String> {
+  use {Number::SamInt, Value::SamNumber};
+
   expect_node(
     &node,
     "if_expression",
     "If expression node expected but not found.",
   )?;
 
-  return Ok(());
+  let condition = evaluate_expression(
+    node.child_by_field_name("condition").unwrap(),
+    ctx,
+    source,
+  )?;
+
+  let SamNumber(SamInt(cond_result)) = condition else {
+    return Err(format!(
+      "Expected integer result for condition but not found. {:#?}",
+      node.range()
+    ));
+  };
+
+  let mut value = Value::Undefined;
+
+  if cond_result != 0 {
+    value = evaluate_statement_block(
+      node.child_by_field_name("consequence").unwrap(),
+      ctx,
+      source,
+    )?;
+  } else if let Some(else_arm) = node.child_by_field_name("else") {
+    value = match else_arm.kind() {
+      "statement_block" => evaluate_expression(else_arm, ctx, source)?,
+      "if_expression" => evaluate_if_expression(else_arm, ctx, source)?,
+      _ => {
+        return Err(format!(
+          "Unknown else expression encountered. {:#?}",
+          else_arm.range()
+        ));
+      }
+    }
+  }
+
+  return Ok(value);
 }
 
 fn evaluate_statement_block(
   node: Node,
-  _ctx: &mut Context,
-  _source: &[u8],
-) -> Result<(), String> {
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<Value, String> {
   expect_node(
     &node,
     "statement_block",
     "Statement block node expected but not found.",
   )?;
 
-  return Ok(());
+  ctx.init_scope();
+
+  let mut walker = node.walk();
+
+  // return value of the block
+  let mut value = Value::Undefined;
+
+  for statement in node.named_children(&mut walker) {
+    if statement.kind() == "return_statement" {
+      value = evaluate_return_statement(node, ctx, source)?;
+
+      break;
+    }
+
+    evaluate_statement(statement, ctx, source)?;
+  }
+
+  println!("{:#?}", ctx);
+
+  ctx.destroy_scope();
+
+  return Ok(value);
+}
+
+fn evaluate_return_statement(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<Value, String> {
+  expect_node(
+    &node,
+    "return_statement",
+    "Return statement node expected but not found.",
+  )?;
+
+  return match node.child_by_field_name("value") {
+    Some(v) => evaluate_expression(v, ctx, source),
+    None => Ok(Value::Undefined),
+  };
 }
 
 fn evaluate_identifier(node: Node, source: &[u8]) -> Result<String, String> {

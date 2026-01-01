@@ -16,7 +16,14 @@ fn main() {
   let mut parser = Parser::new();
   parser.set_language(&language).unwrap();
 
-  let text = "let a = 4 + 5;";
+  let text = r#"
+    let a = 6, b = 4;
+
+    if (4 == 4) {
+      let a = 5;
+      b = a + b;
+    };
+    "#;
 
   let tree = parser.parse(text, None).unwrap();
   let root = tree.root_node();
