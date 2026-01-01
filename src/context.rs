@@ -5,6 +5,22 @@ use tree_sitter::Tree;
 use crate::value::Value;
 use std::collections::HashMap;
 
+// Variant for statements, allows for early return
+pub enum EvalControl {
+  Value(Value),
+  Return(Value),
+}
+
+pub type EvalResult = Result<EvalControl, String>;
+
+impl EvalControl {
+  pub fn to_value(&self) -> Value {
+    match self {
+      EvalControl::Value(v) | EvalControl::Return(v) => v.clone(),
+    }
+  }
+}
+
 type SymbolTable = HashMap<String, Value>;
 
 #[derive(Debug)]

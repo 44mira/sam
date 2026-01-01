@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::context::Context;
+use crate::context::{Context, EvalControl, EvalResult};
 use crate::value::{Number, Value};
 use tree_sitter::{Node, Tree};
 
@@ -12,183 +12,164 @@ fn expect_node(
   if node.kind() != node_name {
     return Err(format!("{} {:#?}", message, node.range()));
   }
-
-  return Ok(());
+  Ok(())
 }
 
-pub fn evaluate(
-  root: &Node,
+pub fn evaluate<'a>(
+  root: &'a Node,
   source: &[u8],
-  tree: &Tree,
-) -> Result<String, String> {
-  expect_node(
-    root,
-    "source_file",
-    "Source file node expected but not found.",
-  )?;
+  tree: &'a Tree,
+) -> Result<Context<'a>, String> {
+  expect_node(root, "source_file", "Expected source file")?;
 
-  // the variable table/environment, to be passed around as mutable reference
-  let mut ctx = Context::new(&tree);
+  let mut ctx = Context::new(tree);
 
-  // TODO: handle interface
   let mut walker = root.walk();
   for child in root.named_children(&mut walker) {
-    evaluate_statement(child, &mut ctx, source)?;
+    match evaluate_statement(child, &mut ctx, source)? {
+      EvalControl::Value(_) => {}
+      EvalControl::Return(_) => {
+        return Err("Return outside function".to_owned());
+      }
+    }
   }
 
-  println!("{:#?}", ctx);
-
-  return Ok("Evaluation successful".to_owned());
+  Ok(ctx)
 }
+
+/* =========================
+Statements
+========================= */
 
 fn evaluate_statement(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<Value, String> {
-  // TODO: add other statement types
-  let value = match node.kind() {
+) -> EvalResult {
+  match node.kind() {
     "expression_statement" => {
-      evaluate_expression(node.child(0).unwrap(), ctx, source)?
+      let v = evaluate_expression(node.child(0).unwrap(), ctx, source)?;
+      Ok(v)
     }
-    "variable_declaration" => evaluate_variable_declaration(node, ctx, source)?,
-    "assignment" => evaluate_assignment(node, ctx, source)?,
-    _ => {
-      return Err(format!(
-        "Unknown statement encountered. {:#?}",
-        node.range()
-      ));
-    }
-  };
 
-  return Ok(value);
+    "variable_declaration" => {
+      evaluate_variable_declaration(node, ctx, source)?;
+      Ok(EvalControl::Value(Value::Undefined))
+    }
+
+    "assignment" => {
+      let v = evaluate_assignment(node, ctx, source)?;
+      Ok(EvalControl::Value(v))
+    }
+
+    "return_statement" => evaluate_return_statement(node, ctx, source),
+
+    _ => Err(format!("Unknown statement {:?}", node.range())),
+  }
 }
 
-fn evaluate_assignment(
-  node: Node,
-  ctx: &mut Context,
-  source: &[u8],
-) -> Result<Value, String> {
-  expect_node(
-    &node,
-    "assignment",
-    "Variable assignment node expected but not found.",
-  )?;
-
-  let lhs =
-    evaluate_identifier(node.child_by_field_name("lhs").unwrap(), source)?;
-
-  let rhs =
-    evaluate_expression(node.child_by_field_name("rhs").unwrap(), ctx, source)?;
-
-  // assign value to existing key in the call stack
-  let Some(var) = ctx.search_in_stack(&lhs) else {
-    return Err(format!(
-      "Assigning to non-existent variable. {:#?}",
-      node.range()
-    ));
-  };
-  *var = rhs.clone();
-
-  return Ok(rhs);
-}
+/* =========================
+Expressions
+========================= */
 
 fn evaluate_expression(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<Value, String> {
-  // TODO: add other expression types
-  return match node.kind() {
-    "literal" => evaluate_literal(node, source),
-    "binary_expression" => evaluate_binary_expression(node, ctx, source),
-    "if_expression" => evaluate_if_expression(node, ctx, source),
-    "lambda_expression" => evaluate_lambda_expression(node, ctx, source),
-    "call_expression" => evaluate_call_expression(node, ctx, source),
-    "identifier" => {
-      let varname = evaluate_identifier(node, source)?;
+) -> EvalResult {
+  match node.kind() {
+    "literal" => Ok(EvalControl::Value(evaluate_literal(node, source)?)),
 
-      let Some(var) = ctx.search_in_stack(&varname) else {
+    "binary_expression" => {
+      let v = evaluate_binary_expression(node, ctx, source)?;
+      Ok(EvalControl::Value(v))
+    }
+
+    "if_expression" => evaluate_if_expression(node, ctx, source),
+
+    "lambda_expression" => {
+      let v = evaluate_lambda_expression(node, ctx, source)?;
+      Ok(EvalControl::Value(v))
+    }
+
+    "call_expression" => evaluate_call_expression(node, ctx, source),
+
+    "identifier" => {
+      let name = evaluate_identifier(node, source)?;
+      let Some(var) = ctx.search_in_stack(&name) else {
         return Err(format!(
-          "Variable {} not defined. {:#?}",
-          varname,
+          "Variable {} not defined {:?}",
+          name,
           node.range()
         ));
       };
-
-      // create a new copy for return
-      return Ok(var.clone());
+      Ok(EvalControl::Value(var.clone()))
     }
-    _ => Err(format!(
-      "Unknown expression encountered. {:#?}",
-      node.range()
-    )),
-  };
+
+    _ => Err(format!("Unknown expression {:?}", node.range())),
+  }
 }
+
+/* =========================
+Binary expression
+========================= */
 
 fn evaluate_binary_expression(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
 ) -> Result<Value, String> {
-  expect_node(
-    &node,
-    "binary_expression",
-    "Binary expression node expected but not found.",
-  )?;
+  expect_node(&node, "binary_expression", "Expected binary expression")?;
 
   let left = evaluate_expression(
     node.child_by_field_name("left").unwrap(),
     ctx,
     source,
-  )?;
+  )?
+  .to_value();
 
   let right = evaluate_expression(
     node.child_by_field_name("right").unwrap(),
     ctx,
     source,
-  )?;
+  )?
+  .to_value();
 
-  let operator = node.child(1).unwrap().utf8_text(source).unwrap().trim();
+  let op = node.child(1).unwrap().utf8_text(source).unwrap().trim();
 
-  let result = match operator {
+  Ok(match op {
     "+" => left + right,
+    "-" => left - right,
     "*" => left * right,
     "/" => left / right,
     "%" => left % right,
-    "-" => left - right,
     "<" => (left < right).into(),
     ">" => (left > right).into(),
     "==" => (left == right).into(),
     "<=" => (left <= right).into(),
     ">=" => (left >= right).into(),
     "!=" => (left != right).into(),
-    _ => {
-      return Err(format!("Unknown operator encountered. {:#?}", node.range()));
-    }
-  };
-
-  return Ok(result);
+    _ => return Err(format!("Unknown operator {:?}", node.range())),
+  })
 }
+
+/* =========================
+Variable declaration
+========================= */
 
 fn evaluate_variable_declaration(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<Value, String> {
-  expect_node(
-    &node,
-    "variable_declaration",
-    "Variable declaration not found.",
-  )?;
+) -> Result<(), String> {
+  expect_node(&node, "variable_declaration", "Expected declaration")?;
 
   let mut walker = node.walk();
   for declarator in node.named_children(&mut walker) {
     evaluate_variable_declarator(declarator, ctx, source)?;
   }
 
-  // TODO: Could be set to return the rhs of one declarator instead, but idgaf at this point
-  return Ok(Value::Undefined);
+  Ok(())
 }
 
 fn evaluate_variable_declarator(
@@ -196,234 +177,213 @@ fn evaluate_variable_declarator(
   ctx: &mut Context,
   source: &[u8],
 ) -> Result<(), String> {
-  expect_node(
-    &node,
-    "variable_declarator",
-    "Variable declarator expected but not found.",
-  )?;
+  expect_node(&node, "variable_declarator", "Expected declarator")?;
 
-  // obtain fields
   let ident =
     evaluate_identifier(node.child_by_field_name("variable").unwrap(), source)?;
 
-  // evaluate lhs (if it exists)
   let value = node
     .child_by_field_name("value")
     .map(|n| evaluate_expression(n, ctx, source))
-    .transpose()?;
+    .transpose()?
+    .map(|v| v.to_value());
 
-  // assign to current scope
   let scope = ctx.current_scope();
-  let entry = scope.entry(ident.to_owned()).or_insert(Value::Undefined);
+  let entry = scope.entry(ident).or_insert(Value::Undefined);
 
   if let Some(v) = value {
     *entry = v;
   }
 
-  return Ok(());
+  Ok(())
 }
+
+/* =========================
+Assignment
+========================= */
+
+fn evaluate_assignment(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<Value, String> {
+  expect_node(&node, "assignment", "Expected assignment")?;
+
+  let lhs =
+    evaluate_identifier(node.child_by_field_name("lhs").unwrap(), source)?;
+
+  let rhs =
+    evaluate_expression(node.child_by_field_name("rhs").unwrap(), ctx, source)?
+      .to_value();
+
+  let Some(var) = ctx.search_in_stack(&lhs) else {
+    return Err(format!(
+      "Assigning to undefined variable {:?}",
+      node.range()
+    ));
+  };
+
+  *var = rhs.clone();
+  Ok(rhs)
+}
+
+/* =========================
+If expression
+========================= */
 
 fn evaluate_if_expression(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<Value, String> {
+) -> EvalResult {
   use {Number::SamInt, Value::SamNumber};
 
-  expect_node(
-    &node,
-    "if_expression",
-    "If expression node expected but not found.",
-  )?;
+  expect_node(&node, "if_expression", "Expected if expression")?;
 
-  let condition = evaluate_expression(
+  let cond = evaluate_expression(
     node.child_by_field_name("condition").unwrap(),
     ctx,
     source,
-  )?;
+  )?
+  .to_value();
 
-  let SamNumber(SamInt(cond_result)) = condition else {
-    return Err(format!(
-      "Expected integer result for condition but not found. {:#?}",
-      node.range()
-    ));
+  let SamNumber(SamInt(c)) = cond else {
+    return Err(format!("Condition must be integer {:?}", node.range()));
   };
 
-  let mut value = Value::Undefined;
-
-  if cond_result != 0 {
-    value = evaluate_statement_block(
+  if c != 0 {
+    return evaluate_statement_block(
       node.child_by_field_name("consequence").unwrap(),
       ctx,
       source,
-    )?;
-  } else if let Some(else_arm) = node.child_by_field_name("else") {
-    value = match else_arm.kind() {
-      "statement_block" => evaluate_statement_block(else_arm, ctx, source)?,
-      "if_expression" => evaluate_if_expression(else_arm, ctx, source)?,
-      _ => {
-        return Err(format!(
-          "Unknown else expression encountered. {:#?}",
-          else_arm.range()
-        ));
-      }
-    }
+    );
   }
 
-  return Ok(value);
+  if let Some(else_arm) = node.child_by_field_name("else") {
+    return match else_arm.kind() {
+      "statement_block" => evaluate_statement_block(else_arm, ctx, source),
+      "if_expression" => evaluate_if_expression(else_arm, ctx, source),
+      _ => Err(format!("Invalid else {:?}", else_arm.range())),
+    };
+  }
+
+  Ok(EvalControl::Value(Value::Undefined))
 }
+
+/* =========================
+Lambda & Call
+========================= */
 
 fn evaluate_lambda_expression(
   node: Node,
   _ctx: &mut Context,
   _source: &[u8],
 ) -> Result<Value, String> {
-  expect_node(
-    &node,
-    "lambda_expression",
-    "Lambda expression node expected but not found.",
-  )?;
-
+  expect_node(&node, "lambda_expression", "Expected lambda")?;
   let range = node.child_by_field_name("body").unwrap().byte_range();
-
-  return Ok(Value::SamFunction(range));
+  Ok(Value::SamFunction(range))
 }
 
 fn evaluate_call_expression(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<Value, String> {
-  expect_node(
-    &node,
-    "call_expression",
-    "Call expression node expected but not found.",
-  )?;
+) -> EvalResult {
+  expect_node(&node, "call_expression", "Expected call")?;
 
   let Value::SamFunction(func) = evaluate_expression(
     node.child_by_field_name("function").unwrap(),
     ctx,
     source,
   )?
-  else {
-    return Err(format!(
-      "Expected function expression but not found. {:#?}",
-      node.range()
-    ));
+  .to_value() else {
+    return Err(format!("Expected function {:?}", node.range()));
   };
 
-  let body_node = ctx
+  let body = ctx
     .tree
     .root_node()
     .descendant_for_byte_range(func.start, func.end)
-    .ok_or(format!(
-      "Expected function body but not found. {:#?}",
-      node.range()
-    ))?;
+    .ok_or("Function body not found")?;
 
-  let value = evaluate_statement_block(body_node, ctx, source);
-
-  return value;
+  evaluate_statement_block(body, ctx, source)
 }
+
+/* =========================
+Statement block
+========================= */
 
 fn evaluate_statement_block(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<Value, String> {
-  expect_node(
-    &node,
-    "statement_block",
-    "Statement block node expected but not found.",
-  )?;
+) -> EvalResult {
+  expect_node(&node, "statement_block", "Expected block")?;
 
   ctx.init_scope();
 
   let mut walker = node.walk();
-
-  // return value of the block
-  let mut value = Value::Undefined;
-
-  for statement in node.named_children(&mut walker) {
-    if statement.kind() == "return_statement" {
-      value = evaluate_return_statement(statement, ctx, source)?;
-
-      break;
+  for stmt in node.named_children(&mut walker) {
+    match evaluate_statement(stmt, ctx, source)? {
+      EvalControl::Value(_) => {}
+      EvalControl::Return(v) => {
+        ctx.destroy_scope();
+        return Ok(EvalControl::Return(v));
+      }
     }
-
-    evaluate_statement(statement, ctx, source)?;
   }
 
   ctx.destroy_scope();
-
-  return Ok(value);
+  Ok(EvalControl::Value(Value::Undefined))
 }
+
+/* =========================
+Return
+========================= */
 
 fn evaluate_return_statement(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
-) -> Result<Value, String> {
-  expect_node(
-    &node,
-    "return_statement",
-    "Return statement node expected but not found.",
-  )?;
+) -> EvalResult {
+  expect_node(&node, "return_statement", "Expected return")?;
 
-  return match node.child_by_field_name("value") {
-    Some(v) => evaluate_expression(v, ctx, source),
-    None => Ok(Value::Undefined),
+  let value = match node.child_by_field_name("value") {
+    Some(v) => evaluate_expression(v, ctx, source)?.to_value(),
+    None => Value::Undefined,
   };
+
+  Ok(EvalControl::Return(value))
 }
 
+/* =========================
+Literals & identifiers
+========================= */
+
 fn evaluate_identifier(node: Node, source: &[u8]) -> Result<String, String> {
-  expect_node(
-    &node,
-    "identifier",
-    "Identifier node expected but not found.",
-  )?;
-
-  // get identifier name
-  let ident = node.utf8_text(source).unwrap().to_owned();
-
-  return Ok(ident);
+  expect_node(&node, "identifier", "Expected identifier")?;
+  Ok(node.utf8_text(source).unwrap().to_owned())
 }
 
 fn evaluate_literal(node: Node, source: &[u8]) -> Result<Value, String> {
-  expect_node(&node, "literal", "Literal node expected but not found.")?;
+  expect_node(&node, "literal", "Expected literal")?;
+  let child = node.child(0).unwrap();
 
-  let value = node.child(0).unwrap();
-
-  let result: Value;
-  // TODO: handle string
-  match value.kind() {
-    "number" => {
-      result = Value::SamNumber(evaluate_number(value, source)?);
-    }
-    _ => {
-      return Err(format!(
-        "Unknown literal type encountered. {:#?}",
-        node.range()
-      ));
-    }
+  match child.kind() {
+    "number" => Ok(Value::SamNumber(evaluate_number(child, source)?)),
+    _ => Err(format!("Unknown literal {:?}", node.range())),
   }
-
-  return Ok(result);
 }
 
 fn evaluate_number(node: Node, source: &[u8]) -> Result<Number, String> {
-  expect_node(&node, "number", "Number node expected but not found.")?;
+  expect_node(&node, "number", "Expected number")?;
 
-  let value = node.utf8_text(source).unwrap();
-  let parsed: Number;
-
-  if value.contains(".") {
-    parsed = Number::SamFloat(value.parse().unwrap());
+  let text = node.utf8_text(source).unwrap();
+  if text.contains('.') {
+    Ok(Number::SamFloat(text.parse().unwrap()))
   } else {
-    parsed = Number::SamInt(value.parse().unwrap())
+    Ok(Number::SamInt(text.parse().unwrap()))
   }
-
-  return Ok(parsed);
 }
 
 #[cfg(test)]
@@ -477,7 +437,7 @@ mod tests {
   fn test_lambda_call() {
     let source = b"
         let f = () => { return 42; };
-        f();
+        let b = f();
     ";
 
     let mut parser = get_parser();
@@ -487,5 +447,30 @@ mod tests {
 
     let result = evaluate(&root, source, &tree);
     assert!(result.is_ok());
+    assert_eq!(
+      result.unwrap().call_stack[0]["b"],
+      Value::SamNumber(Number::SamInt(42))
+    );
+  }
+
+  #[test]
+  fn test_nested_return() {
+    let source = b"
+        let f = () => { if (4 == 4) { return 3 }; };
+        let b = f();
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+
+    assert_eq!(
+      result.unwrap().call_stack[0]["b"],
+      Value::SamNumber(Number::SamInt(3))
+    );
   }
 }
