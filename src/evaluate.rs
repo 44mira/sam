@@ -473,4 +473,19 @@ mod tests {
       Value::SamNumber(Number::SamInt(3))
     );
   }
+
+  #[test]
+  fn test_nonexistent_var() {
+    let source = b"
+      let a = b;
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(!result.is_ok());
+  }
 }
