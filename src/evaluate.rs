@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::context::{Context, EvalControl, EvalResult};
-use crate::value::{Number, Value};
+use crate::value::{Function, Number, Value};
 use tree_sitter::{Node, Tree};
 
 fn expect_node(
@@ -72,7 +72,7 @@ fn evaluate_statement(
 Expressions
 ========================= */
 
-fn evaluate_expression(
+pub fn evaluate_expression(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
@@ -256,12 +256,15 @@ fn evaluate_if_expression(
       node.child_by_field_name("consequence").unwrap(),
       ctx,
       source,
+      None,
     );
   }
 
   if let Some(else_arm) = node.child_by_field_name("else") {
     return match else_arm.kind() {
-      "statement_block" => evaluate_statement_block(else_arm, ctx, source),
+      "statement_block" => {
+        evaluate_statement_block(else_arm, ctx, source, None)
+      }
       "if_expression" => evaluate_if_expression(else_arm, ctx, source),
       _ => Err(format!("Invalid else {:?}", else_arm.range())),
     };
@@ -277,11 +280,22 @@ Lambda & Call
 fn evaluate_lambda_expression(
   node: Node,
   _ctx: &mut Context,
-  _source: &[u8],
+  source: &[u8],
 ) -> Result<Value, String> {
   expect_node(&node, "lambda_expression", "Expected lambda")?;
+
+  // retrieve byte representation for lazy evaluation
   let range = node.child_by_field_name("body").unwrap().byte_range();
-  Ok(Value::SamFunction(range))
+
+  // temporarily represent as empty small Vec
+  let mut params = Vec::with_capacity(1);
+
+  // if parameters exist, replace the Vec
+  if let Some(params_node) = node.child_by_field_name("parameters") {
+    params = Function::extract_params(params_node, source)?;
+  }
+
+  return Ok(Value::SamFunction(Function::new(range, params)));
 }
 
 fn evaluate_call_expression(
@@ -297,16 +311,32 @@ fn evaluate_call_expression(
     source,
   )?
   .to_value() else {
-    return Err(format!("Expected function {:?}", node.range()));
+    return Err(format!(
+      "Expected function but not found. {:#?}",
+      node.range()
+    ));
   };
+
+  // temporarily represent as empty small Vec
+  let mut args = Vec::with_capacity(1);
+
+  if let Some(args_node) = node.child_by_field_name("arguments") {
+    args = Function::extract_args(args_node, ctx, source)?;
+  }
+
+  if args.len() != func.params.len() {
+    return Err(format!("Argument count mismatch. {:#?}", node.range()));
+  }
+
+  let bindings = func.params.iter().cloned().zip(args).collect();
 
   let body = ctx
     .tree
     .root_node()
-    .descendant_for_byte_range(func.start, func.end)
+    .descendant_for_byte_range(func.body.start, func.body.end)
     .ok_or("Function body not found")?;
 
-  evaluate_statement_block(body, ctx, source)
+  return evaluate_statement_block(body, ctx, source, Some(bindings));
 }
 
 /* =========================
@@ -317,10 +347,18 @@ fn evaluate_statement_block(
   node: Node,
   ctx: &mut Context,
   source: &[u8],
+  bindings: Option<Vec<(String, Value)>>,
 ) -> EvalResult {
   expect_node(&node, "statement_block", "Expected block")?;
 
   ctx.init_scope();
+
+  if let Some(bindings) = bindings {
+    let scope = ctx.current_scope();
+    for (name, value) in bindings {
+      scope.insert(name, value);
+    }
+  }
 
   let mut walker = node.walk();
   for stmt in node.named_children(&mut walker) {
@@ -478,6 +516,42 @@ mod tests {
   fn test_nonexistent_var() {
     let source = b"
       let a = b;
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(!result.is_ok());
+  }
+
+  #[test]
+  fn test_parameter_handling() {
+    let source = b"
+      let a = (x, y) => { return x + 5; };
+      let b = a(4, 3);
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+    assert_eq!(
+      result.unwrap().call_stack[0]["b"],
+      Value::SamNumber(Number::SamInt(9))
+    );
+  }
+
+  #[test]
+  fn test_parameter_handling_err() {
+    let source = b"
+      let a = (x, y) => { return x + 5; };
+      let b = a(4);
     ";
 
     let mut parser = get_parser();

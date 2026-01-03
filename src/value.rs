@@ -2,19 +2,87 @@
 
 use std::ops::{Range, *};
 
+use tree_sitter::Node;
+
+use crate::{
+  context::{Context, EvalControl},
+  evaluate::evaluate_expression,
+};
+
 // TODO: Add string and functions
 #[derive(Debug, Clone)]
 pub enum Value {
   SamNumber(Number),
   // byte range of function for lazy evaluation
-  SamFunction(Range<usize>),
+  SamFunction(Function),
   Undefined,
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+  // functions are represented as their byte range and parameter list
+  pub body: Range<usize>,
+  pub params: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Number {
   SamInt(i64),
   SamFloat(f64),
+}
+
+/* =========================
+Function internal representation
+========================= */
+
+impl Function {
+  pub fn new(body: Range<usize>, params: Vec<String>) -> Self {
+    return Function { body, params };
+  }
+
+  pub fn extract_params(
+    node: Node,
+    source: &[u8],
+  ) -> Result<Vec<String>, String> {
+    let mut params = Vec::new();
+    let mut walker = node.walk();
+
+    for child in node.named_children(&mut walker) {
+      if child.kind() == "identifier" {
+        let Ok(varname) = child.utf8_text(source) else {
+          return Err(format!(
+            "There was an error when parsing the variable name of a parameter."
+          ));
+        };
+
+        params.push(varname.to_owned());
+      }
+    }
+
+    Ok(params)
+  }
+
+  pub fn extract_args(
+    node: Node,
+    ctx: &mut Context,
+    source: &[u8],
+  ) -> Result<Vec<Value>, String> {
+    let mut args = Vec::new();
+    let mut walker = node.walk();
+
+    for arg in node.named_children(&mut walker) {
+      let EvalControl::Value(val) = evaluate_expression(arg, ctx, source)?
+      else {
+        return Err(format!(
+          "Unexpected return expression. {:#?}",
+          node.range()
+        ));
+      };
+      args.push(val);
+    }
+
+    Ok(args)
+  }
 }
 
 /* =========================
