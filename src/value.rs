@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+use std::fmt;
 use std::ops::{Range, *};
-
 use tree_sitter::Node;
 
 use crate::{
@@ -9,13 +10,13 @@ use crate::{
   evaluate::evaluate_expression,
 };
 
-// TODO: Add string and functions
 #[derive(Debug, Clone)]
 pub enum Value {
   SamNumber(Number),
   // byte range of function for lazy evaluation
   SamFunction(Function),
   SamString(String),
+  SamObject(HashMap<String, Value>),
   Undefined,
 }
 
@@ -37,6 +38,19 @@ Value internal representation
 ========================= */
 
 impl Value {
+  pub fn get_attr(&self, node: &Node, key: &str) -> Result<Value, String> {
+    match self {
+      Value::SamObject(map) => {
+        Ok(map.get(key).cloned().unwrap_or(Value::Undefined))
+      }
+      _ => Err(format!(
+        "Cannot access property '{}' on non-object {:?}",
+        key,
+        node.range()
+      )),
+    }
+  }
+
   pub fn decode_escape(esc: &str) -> Result<char, String> {
     let body = &esc[1..]; // strip leading '\'
 
@@ -327,6 +341,48 @@ impl PartialOrd for Value {
       (Value::SamNumber(a), Value::SamNumber(b)) => a.partial_cmp(b),
       (Value::SamString(a), Value::SamString(b)) => a.partial_cmp(b),
       _ => None,
+    }
+  }
+}
+
+/* =========================
+  ToString trait
+========================= */
+
+impl fmt::Display for Value {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Value::SamNumber(n) => write!(f, "{n}"),
+
+      Value::SamString(s) => write!(f, "{s}"),
+
+      Value::SamFunction(_) => write!(f, "<function>"),
+
+      Value::SamObject(obj) => {
+        write!(f, "{{")?;
+        let mut first = true;
+
+        for (k, v) in obj {
+          if !first {
+            write!(f, ", ")?;
+          }
+          first = false;
+          write!(f, "{}: {}", k, v)?;
+        }
+
+        write!(f, "}}")
+      }
+
+      Value::Undefined => write!(f, "undefined"),
+    }
+  }
+}
+
+impl fmt::Display for Number {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Number::SamInt(i) => write!(f, "{i}"),
+      Number::SamFloat(x) => write!(f, "{x}"),
     }
   }
 }

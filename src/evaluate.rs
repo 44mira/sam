@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::context::{Context, EvalControl, EvalResult};
+use crate::ffi::Shell;
 use crate::value::{Function, Number, Value};
 use tree_sitter::{Node, Tree};
 
@@ -105,6 +106,8 @@ pub fn evaluate_expression(
       };
       Ok(EvalControl::Value(var.clone()))
     }
+
+    "nested_identifier" => evaluate_nested_identifier(node, ctx, source),
 
     _ => Err(format!("Unknown expression {:?}", node.range())),
   }
@@ -228,6 +231,30 @@ fn evaluate_assignment(
 }
 
 /* =========================
+Attribute access
+========================= */
+
+fn evaluate_nested_identifier(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> EvalResult {
+  let parent_node = node
+    .child_by_field_name("parent")
+    .ok_or("Missing parent in nested_identifier")?;
+
+  let name_node = node
+    .child_by_field_name("name")
+    .ok_or("Missing name in nested_identifier")?;
+
+  let parent_value = evaluate_expression(parent_node, ctx, source)?.to_value();
+
+  let key = name_node.utf8_text(source).map_err(|e| e.to_string())?;
+
+  return Ok(EvalControl::Value(parent_value.get_attr(&node, key)?));
+}
+
+/* =========================
 If expression
 ========================= */
 
@@ -305,17 +332,7 @@ fn evaluate_call_expression(
 ) -> EvalResult {
   expect_node(&node, "call_expression", "Expected call")?;
 
-  let Value::SamFunction(func) = evaluate_expression(
-    node.child_by_field_name("function").unwrap(),
-    ctx,
-    source,
-  )?
-  .to_value() else {
-    return Err(format!(
-      "Expected function but not found. {:#?}",
-      node.range()
-    ));
-  };
+  let func_node = node.child_by_field_name("function").unwrap();
 
   // temporarily represent as empty small Vec
   let mut args = Vec::with_capacity(1);
@@ -324,19 +341,33 @@ fn evaluate_call_expression(
     args = Function::extract_args(args_node, ctx, source)?;
   }
 
-  if args.len() != func.params.len() {
-    return Err(format!("Argument count mismatch. {:#?}", node.range()));
+  if let Ok(EvalControl::Value(Value::SamFunction(func))) =
+    evaluate_expression(func_node, ctx, source)
+  {
+    if args.len() != func.params.len() {
+      return Err(format!("Argument count mismatch {:?}", node.range()));
+    }
+
+    let bindings = func.params.iter().cloned().zip(args).collect();
+
+    let body = ctx
+      .tree
+      .root_node()
+      .descendant_for_byte_range(func.body.start, func.body.end)
+      .ok_or("Function body not found")?;
+
+    return evaluate_statement_block(body, ctx, source, Some(bindings));
   }
 
-  let bindings = func.params.iter().cloned().zip(args).collect();
+  // Otherwise: shell fallback
+  let command_name = match func_node.kind() {
+    "identifier" => evaluate_identifier(func_node, source)?,
+    _ => return Err(format!("Invalid shell command {:?}", func_node.range())),
+  };
 
-  let body = ctx
-    .tree
-    .root_node()
-    .descendant_for_byte_range(func.body.start, func.body.end)
-    .ok_or("Function body not found")?;
+  let result = Shell::call(&command_name, args)?;
 
-  return evaluate_statement_block(body, ctx, source, Some(bindings));
+  return Ok(EvalControl::Value(result));
 }
 
 /* =========================

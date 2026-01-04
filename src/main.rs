@@ -1,5 +1,6 @@
 mod context;
 mod evaluate;
+mod ffi;
 mod value;
 
 use evaluate::evaluate;
@@ -17,8 +18,8 @@ fn main() {
   parser.set_language(&language).unwrap();
 
   let text = r#"
-        let f = () => { if (4 == 3) {return 42;} else {return 12;}; };
-        let b = f();"#;
+  let a = ls('-la');
+  let b = a.stdout;"#;
 
   let tree = parser.parse(text, None).unwrap();
   let root = &tree.root_node();
