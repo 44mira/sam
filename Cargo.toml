@@ -7,4 +7,5 @@ edition = "2024"
 cc="*"
 
 [dependencies]
+serde_json = "1.0.148"
 tree-sitter = "0.25.10"
