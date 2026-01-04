@@ -15,6 +15,7 @@ pub enum Value {
   SamNumber(Number),
   // byte range of function for lazy evaluation
   SamFunction(Function),
+  SamString(String),
   Undefined,
 }
 
@@ -29,6 +30,51 @@ pub struct Function {
 pub enum Number {
   SamInt(i64),
   SamFloat(f64),
+}
+
+/* =========================
+Value internal representation
+========================= */
+
+impl Value {
+  pub fn decode_escape(esc: &str) -> Result<char, String> {
+    let body = &esc[1..]; // strip leading '\'
+
+    let c = match body {
+      "n" => '\n',
+      "r" => '\r',
+      "t" => '\t',
+      "\\" => '\\',
+      "\"" => '"',
+      "'" => '\'',
+
+      // Octal: \123
+      _ if body.chars().all(|c| c.is_digit(8)) => {
+        let value = u32::from_str_radix(body, 8).unwrap();
+        char::from_u32(value).ok_or("Invalid octal escape")?
+      }
+
+      // Hex: \xFF
+      _ if body.starts_with('x') => {
+        let value = u32::from_str_radix(&body[1..], 16).unwrap();
+        char::from_u32(value).ok_or("Invalid hex escape")?
+      }
+
+      // Unicode: \u1234 or \u{1F600}
+      _ if body.starts_with('u') => {
+        let hex = body
+          .trim_start_matches("u")
+          .trim_start_matches('{')
+          .trim_end_matches('}');
+        let value = u32::from_str_radix(hex, 16).unwrap();
+        char::from_u32(value).ok_or("Invalid unicode escape")?
+      }
+
+      _ => return Err(format!("Unknown escape sequence: \\{}", body)),
+    };
+
+    return Ok(c);
+  }
 }
 
 /* =========================
@@ -149,6 +195,13 @@ impl Add for Value {
   fn add(self, rhs: Value) -> Value {
     match (self, rhs) {
       (Value::SamNumber(a), Value::SamNumber(b)) => Value::SamNumber(a + b),
+      (Value::SamString(a), Value::SamString(b)) => {
+        let mut a = a.to_owned();
+        let b = b.to_owned();
+
+        a.push_str(&b);
+        Value::SamString(a)
+      }
       _ => Value::Undefined,
     }
   }
@@ -261,6 +314,7 @@ impl PartialEq for Value {
   fn eq(&self, other: &Self) -> bool {
     match (self, other) {
       (Value::SamNumber(a), Value::SamNumber(b)) => a == b,
+      (Value::SamString(a), Value::SamString(b)) => a == b,
       (Value::Undefined, Value::Undefined) => true,
       _ => false,
     }
@@ -271,6 +325,7 @@ impl PartialOrd for Value {
   fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
     match (self, other) {
       (Value::SamNumber(a), Value::SamNumber(b)) => a.partial_cmp(b),
+      (Value::SamString(a), Value::SamString(b)) => a.partial_cmp(b),
       _ => None,
     }
   }

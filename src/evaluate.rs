@@ -409,8 +409,31 @@ fn evaluate_literal(node: Node, source: &[u8]) -> Result<Value, String> {
 
   match child.kind() {
     "number" => Ok(Value::SamNumber(evaluate_number(child, source)?)),
+    "string" => Ok(Value::SamString(evaluate_string(child, source)?)),
     _ => Err(format!("Unknown literal {:?}", node.range())),
   }
+}
+
+fn evaluate_string(node: Node, source: &[u8]) -> Result<String, String> {
+  expect_node(&node, "string", "Expected string")?;
+
+  let mut result = String::new();
+  let mut walker = node.walk();
+
+  for child in node.named_children(&mut walker) {
+    match child.kind() {
+      "string_fragment" => {
+        result.push_str(child.utf8_text(source).unwrap());
+      }
+      "escape_sequence" => {
+        let esc = child.utf8_text(source).unwrap();
+        result.push(Value::decode_escape(esc)?);
+      }
+      _ => {}
+    }
+  }
+
+  return Ok(result);
 }
 
 fn evaluate_number(node: Node, source: &[u8]) -> Result<Number, String> {
@@ -561,5 +584,60 @@ mod tests {
 
     let result = evaluate(&root, source, &tree);
     assert!(!result.is_ok());
+  }
+
+  #[test]
+  fn test_strings() {
+    let source = b"
+      let a = 'hello';
+      let b = 'hello\\nworld';
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+
+    let result = result.unwrap();
+
+    assert_eq!(
+      result.call_stack[0]["a"],
+      Value::SamString("hello".to_owned()),
+    );
+
+    assert_eq!(
+      result.call_stack[0]["b"],
+      Value::SamString("hello\nworld".to_owned())
+    );
+  }
+
+  #[test]
+  fn test_string_traits() {
+    let source = b"
+      let a = 'hello' + ' world';
+      let b = 'a' == 'a';
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+
+    let result = result.unwrap();
+
+    assert_eq!(
+      result.call_stack[0]["a"],
+      Value::SamString("hello world".to_owned()),
+    );
+    assert_eq!(
+      result.call_stack[0]["b"],
+      Value::SamNumber(Number::SamInt(1)),
+    );
   }
 }
