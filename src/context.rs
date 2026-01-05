@@ -82,4 +82,8 @@ impl<'a> Context<'a> {
   pub fn current_scope(&mut self) -> &mut SymbolTable {
     return self.call_stack.last_mut().unwrap();
   }
+
+  pub fn global_scope(&mut self) -> &mut SymbolTable {
+    return self.call_stack.first_mut().unwrap();
+  }
 }

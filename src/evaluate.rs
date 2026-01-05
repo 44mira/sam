@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::context::{Context, EvalControl, EvalResult};
-use crate::ffi::Shell;
+use crate::ffi::{FFI, Shell};
 use crate::value::{Function, Number, Value};
 use tree_sitter::{Node, Tree};
 
@@ -26,7 +26,19 @@ pub fn evaluate<'a>(
   let mut ctx = Context::new(tree);
 
   let mut walker = root.walk();
-  for child in root.named_children(&mut walker) {
+  let mut children = root.named_children(&mut walker);
+
+  // optionally check if the first is interfaces
+  if let Some(first) = children.next() {
+    if first.kind() == "interfaces" {
+      evaluate_interfaces(first, &mut ctx, source)?;
+    } else {
+      evaluate_statement(first, &mut ctx, source)?;
+    }
+  }
+
+  // run the rest as regular
+  for child in children {
     match evaluate_statement(child, &mut ctx, source)? {
       EvalControl::Value(_) => {}
       EvalControl::Return(_) => {
@@ -36,6 +48,44 @@ pub fn evaluate<'a>(
   }
 
   Ok(ctx)
+}
+
+/* =========================
+Interfaces
+========================= */
+
+fn evaluate_interfaces(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<(), String> {
+  expect_node(&node, "interfaces", "Expected interfaces")?;
+
+  let mut walker = node.walk();
+  let interfaces = node.named_children(&mut walker);
+
+  for interface in interfaces {
+    evaluate_interface(interface, ctx, source)?;
+  }
+
+  return Ok(());
+}
+
+fn evaluate_interface(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<(), String> {
+  expect_node(&node, "interface", "Expected interface")?;
+
+  let path =
+    evaluate_string(node.child_by_field_name("path").unwrap(), source)?;
+  let module =
+    evaluate_identifier(node.child_by_field_name("module").unwrap(), source)?;
+
+  FFI::register_ffi(&path, &module, ctx)?;
+
+  return Ok(());
 }
 
 /* =========================
@@ -108,6 +158,11 @@ pub fn evaluate_expression(
     }
 
     "nested_identifier" => evaluate_nested_identifier(node, ctx, source),
+
+    "array_expression" => {
+      let v = evaluate_array_expression(node, ctx, source)?;
+      Ok(EvalControl::Value(v))
+    }
 
     _ => Err(format!("Unknown expression {:?}", node.range())),
   }
@@ -365,7 +420,16 @@ fn evaluate_call_expression(
     _ => return Err(format!("Invalid shell command {:?}", func_node.range())),
   };
 
-  let result = Shell::call(&command_name, args)?;
+  let result;
+
+  // check for FFI or Shell command
+  if let Some(Value::SamForeignFunction(ff)) =
+    ctx.global_scope().get(&command_name)
+  {
+    result = FFI::call(ff, &args)?;
+  } else {
+    result = Shell::call(&command_name, args)?;
+  }
 
   return Ok(EvalControl::Value(result));
 }
@@ -478,9 +542,38 @@ fn evaluate_number(node: Node, source: &[u8]) -> Result<Number, String> {
   }
 }
 
+/* =========================
+Arrays
+========================= */
+
+fn evaluate_array_expression(
+  node: Node,
+  ctx: &mut Context,
+  source: &[u8],
+) -> Result<Value, String> {
+  expect_node(&node, "array_expression", "Expected array expression")?;
+
+  let mut walker = node.walk();
+
+  let mut arr = Vec::new();
+
+  // iterate over items in list
+  for item in node.named_children(&mut walker) {
+    let EvalControl::Value(val) = evaluate_expression(item, ctx, source)?
+    else {
+      return Err(format!("Unexpected return statement. {:#?}", item.range()));
+    };
+
+    arr.push(val);
+  }
+
+  return Ok(Value::SamArray(arr));
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::fs;
   use tree_sitter::{Language, Parser};
 
   // retrieve Language struct from C code
@@ -669,6 +762,34 @@ mod tests {
     assert_eq!(
       result.call_stack[0]["b"],
       Value::SamNumber(Number::SamInt(1)),
+    );
+  }
+
+  #[test]
+  fn test_ffi() {
+    // create dummy json
+    let dir = std::env::temp_dir();
+    let path = dir.join("foo.json");
+    fs::write(&path, r#"{"bar": "echo 42"}"#).unwrap();
+
+    let source = b"
+    interface '/tmp/foo.json' load bar;
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    println!("{:#?}", result);
+    assert!(result.is_ok());
+
+    let mut result = result.unwrap();
+
+    assert_eq!(
+      result.global_scope()["bar"],
+      Value::SamForeignFunction(ForeignFunction::new("echo 42".to_owned()))
     );
   }
 }

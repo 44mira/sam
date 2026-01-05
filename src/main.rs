@@ -17,9 +17,7 @@ fn main() {
   let mut parser = Parser::new();
   parser.set_language(&language).unwrap();
 
-  let text = r#"
-  let a = ls('-la');
-  let b = a.stdout;"#;
+  let text = r#"let a = [1,2,3];"#;
 
   let tree = parser.parse(text, None).unwrap();
   let root = &tree.root_node();

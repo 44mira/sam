@@ -10,13 +10,16 @@ use crate::{
   evaluate::evaluate_expression,
 };
 
+// TODO: Arrays
 #[derive(Debug, Clone)]
 pub enum Value {
   SamNumber(Number),
   // byte range of function for lazy evaluation
   SamFunction(Function),
+  SamForeignFunction(ForeignFunction),
   SamString(String),
   SamObject(HashMap<String, Value>),
+  SamArray(Vec<Value>),
   Undefined,
 }
 
@@ -25,6 +28,11 @@ pub struct Function {
   // functions are represented as their byte range and parameter list
   pub body: Range<usize>,
   pub params: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ForeignFunction {
+  pub cmd: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -142,6 +150,12 @@ impl Function {
     }
 
     Ok(args)
+  }
+}
+
+impl ForeignFunction {
+  pub fn new(cmd: String) -> Self {
+    return ForeignFunction { cmd };
   }
 }
 
@@ -330,6 +344,9 @@ impl PartialEq for Value {
       (Value::SamNumber(a), Value::SamNumber(b)) => a == b,
       (Value::SamString(a), Value::SamString(b)) => a == b,
       (Value::Undefined, Value::Undefined) => true,
+      (Value::SamForeignFunction(a), Value::SamForeignFunction(b)) => {
+        a.cmd == b.cmd
+      }
       _ => false,
     }
   }
@@ -357,6 +374,10 @@ impl fmt::Display for Value {
       Value::SamString(s) => write!(f, "{s}"),
 
       Value::SamFunction(_) => write!(f, "<function>"),
+
+      Value::SamForeignFunction(_) => write!(f, "<foreign-function>"),
+
+      Value::SamArray(a) => write!(f, "{:#?}", a),
 
       Value::SamObject(obj) => {
         write!(f, "{{")?;
