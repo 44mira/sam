@@ -318,6 +318,12 @@ impl From<bool> for Value {
   }
 }
 
+impl From<Value> for bool {
+  fn from(v: Value) -> Self {
+    v != Value::SamNumber(Number::SamInt(0))
+  }
+}
+
 /* =========================
 Number comparison
 ========================= */
@@ -343,6 +349,7 @@ impl PartialEq for Value {
     match (self, other) {
       (Value::SamNumber(a), Value::SamNumber(b)) => a == b,
       (Value::SamString(a), Value::SamString(b)) => a == b,
+      (Value::SamArray(a), Value::SamArray(b)) => a == b,
       (Value::Undefined, Value::Undefined) => true,
       (Value::SamForeignFunction(a), Value::SamForeignFunction(b)) => {
         a.cmd == b.cmd

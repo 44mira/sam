@@ -2,7 +2,7 @@
 
 use crate::context::{Context, EvalControl, EvalResult};
 use crate::ffi::{FFI, Shell};
-use crate::value::{Function, Number, Value};
+use crate::value::{ForeignFunction, Function, Number, Value};
 use tree_sitter::{Node, Tree};
 
 fn expect_node(
@@ -207,6 +207,8 @@ fn evaluate_binary_expression(
     "<=" => (left <= right).into(),
     ">=" => (left >= right).into(),
     "!=" => (left != right).into(),
+    "&&" => (left.into() && right.into()).into(),
+    "||" => (left.into() || right.into()).into(),
     _ => return Err(format!("Unknown operator {:?}", node.range())),
   })
 }

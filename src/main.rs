@@ -17,7 +17,12 @@ fn main() {
   let mut parser = Parser::new();
   parser.set_language(&language).unwrap();
 
-  let text = r#"let a = [1,2,3];"#;
+  let text = r#"
+    interface "/tmp/test.json" load testf;
+
+    let a = testf();
+    let b = ls("-la");
+  "#;
 
   let tree = parser.parse(text, None).unwrap();
   let root = &tree.root_node();
