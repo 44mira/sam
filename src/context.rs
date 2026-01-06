@@ -25,10 +25,8 @@ type SymbolTable = HashMap<String, Value>;
 
 #[derive(Debug)]
 pub struct Context<'a> {
-  // pub env: HashMap<String, Value>,
-  // pub scope_env: Option<HashMap<String, Value>>,
   pub call_stack: Vec<SymbolTable>,
-  pub tree: &'a Tree,
+  pub tree: &'a tree_sitter::Tree,
 }
 
 impl<'a> Context<'a> {
