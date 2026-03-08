@@ -18,9 +18,6 @@ fn main() {
   parser.set_language(&language).unwrap();
 
   let text = r#"
-    interface "/tmp/test.json" load testf;
-
-    let a = testf();
     let b = ls("-la");
   "#;
 

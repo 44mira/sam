@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use crate::context::{Context, EvalControl, EvalResult};
 use crate::ffi::{FFI, Shell};
@@ -40,7 +40,7 @@ pub fn evaluate<'a>(
   // run the rest as regular
   for child in children {
     match evaluate_statement(child, &mut ctx, source)? {
-      EvalControl::Value(_) => {}
+      EvalControl::Value(_) | EvalControl::Reference(_) => {}
       EvalControl::Return(_) => {
         return Err("Return outside function".to_owned());
       }
@@ -92,11 +92,11 @@ fn evaluate_interface(
 Statements
 ========================= */
 
-fn evaluate_statement(
+fn evaluate_statement<'a>(
   node: Node,
-  ctx: &mut Context,
+  ctx: &'a mut Context,
   source: &[u8],
-) -> EvalResult {
+) -> EvalResult<'a> {
   match node.kind() {
     "expression_statement" => {
       let v = evaluate_expression(node.child(0).unwrap(), ctx, source)?;
@@ -123,11 +123,11 @@ fn evaluate_statement(
 Expressions
 ========================= */
 
-pub fn evaluate_expression(
+pub fn evaluate_expression<'a>(
   node: Node,
-  ctx: &mut Context,
+  ctx: &'a mut Context,
   source: &[u8],
-) -> EvalResult {
+) -> EvalResult<'a> {
   match node.kind() {
     "literal" => Ok(EvalControl::Value(evaluate_literal(node, source)?)),
 
@@ -154,7 +154,7 @@ pub fn evaluate_expression(
           node.range()
         ));
       };
-      Ok(EvalControl::Value(var.clone()))
+      Ok(EvalControl::Reference(var))
     }
 
     "nested_identifier" => evaluate_nested_identifier(node, ctx, source),
@@ -162,6 +162,11 @@ pub fn evaluate_expression(
     "array_expression" => {
       let v = evaluate_array_expression(node, ctx, source)?;
       Ok(EvalControl::Value(v))
+    }
+
+    "array_access_expression" => {
+      let v = evaluate_array_access_expression(node, ctx, source)?;
+      Ok(EvalControl::Reference(v))
     }
 
     _ => Err(format!("Unknown expression {:?}", node.range())),
@@ -291,11 +296,11 @@ fn evaluate_assignment(
 Attribute access
 ========================= */
 
-fn evaluate_nested_identifier(
+fn evaluate_nested_identifier<'a>(
   node: Node,
-  ctx: &mut Context,
+  ctx: &'a mut Context,
   source: &[u8],
-) -> EvalResult {
+) -> EvalResult<'a> {
   let parent_node = node
     .child_by_field_name("parent")
     .ok_or("Missing parent in nested_identifier")?;
@@ -304,22 +309,27 @@ fn evaluate_nested_identifier(
     .child_by_field_name("name")
     .ok_or("Missing name in nested_identifier")?;
 
-  let parent_value = evaluate_expression(parent_node, ctx, source)?.to_value();
+  let EvalControl::Reference(r) =
+    evaluate_expression(parent_node, ctx, source)?
+  else {
+    return Err(format!("Expected identifier {:?}", node.range()));
+  };
 
   let key = name_node.utf8_text(source).map_err(|e| e.to_string())?;
 
-  return Ok(EvalControl::Value(parent_value.get_attr(&node, key)?));
+  let val = r.get_attr(&node, key)?;
+  return Ok(EvalControl::Reference(val));
 }
 
 /* =========================
 If expression
 ========================= */
 
-fn evaluate_if_expression(
+fn evaluate_if_expression<'a>(
   node: Node,
-  ctx: &mut Context,
+  ctx: &'a mut Context,
   source: &[u8],
-) -> EvalResult {
+) -> EvalResult<'a> {
   use {Number::SamInt, Value::SamNumber};
 
   expect_node(&node, "if_expression", "Expected if expression")?;
@@ -382,11 +392,11 @@ fn evaluate_lambda_expression(
   return Ok(Value::SamFunction(Function::new(range, params)));
 }
 
-fn evaluate_call_expression(
+fn evaluate_call_expression<'a>(
   node: Node,
-  ctx: &mut Context,
+  ctx: &'a mut Context,
   source: &[u8],
-) -> EvalResult {
+) -> EvalResult<'a> {
   expect_node(&node, "call_expression", "Expected call")?;
 
   let func_node = node.child_by_field_name("function").unwrap();
@@ -398,9 +408,9 @@ fn evaluate_call_expression(
     args = Function::extract_args(args_node, ctx, source)?;
   }
 
-  if let Ok(EvalControl::Value(Value::SamFunction(func))) =
-    evaluate_expression(func_node, ctx, source)
-  {
+  let func = evaluate_expression(func_node, ctx, source)?.to_value();
+
+  if let Value::SamFunction(func) = func {
     if args.len() != func.params.len() {
       return Err(format!("Argument count mismatch {:?}", node.range()));
     }
@@ -440,12 +450,12 @@ fn evaluate_call_expression(
 Statement block
 ========================= */
 
-fn evaluate_statement_block(
+fn evaluate_statement_block<'a>(
   node: Node,
-  ctx: &mut Context,
+  ctx: &'a mut Context,
   source: &[u8],
   bindings: Option<Vec<(String, Value)>>,
-) -> EvalResult {
+) -> EvalResult<'a> {
   expect_node(&node, "statement_block", "Expected block")?;
 
   ctx.init_scope();
@@ -460,7 +470,7 @@ fn evaluate_statement_block(
   let mut walker = node.walk();
   for stmt in node.named_children(&mut walker) {
     match evaluate_statement(stmt, ctx, source)? {
-      EvalControl::Value(_) => {}
+      EvalControl::Value(_) | EvalControl::Reference(_) => {}
       EvalControl::Return(v) => {
         ctx.destroy_scope();
         return Ok(EvalControl::Return(v));
@@ -476,11 +486,11 @@ fn evaluate_statement_block(
 Return
 ========================= */
 
-fn evaluate_return_statement(
+fn evaluate_return_statement<'a>(
   node: Node,
-  ctx: &mut Context,
+  ctx: &'a mut Context,
   source: &[u8],
-) -> EvalResult {
+) -> EvalResult<'a> {
   expect_node(&node, "return_statement", "Expected return")?;
 
   let value = match node.child_by_field_name("value") {
@@ -570,6 +580,72 @@ fn evaluate_array_expression(
   }
 
   return Ok(Value::SamArray(arr));
+}
+
+fn evaluate_array_access_expression<'a>(
+  node: Node,
+  ctx: &'a mut Context,
+  source: &[u8],
+) -> Result<&'a Value, String> {
+  expect_node(
+    &node,
+    "array_access_expression",
+    "Expected array access expression",
+  )?;
+
+  // extract index expression
+  let index_expr = node.child_by_field_name("index").unwrap();
+
+  // evaluate index expression and check that it is of type SamInt
+  let Value::SamNumber(Number::SamInt(index)) =
+    evaluate_expression(index_expr, ctx, source)?.to_value()
+  else {
+    return Err(format!(
+      "Expected index to be of type Int {:?}",
+      node.range()
+    ));
+  };
+
+  // extract array variable to access
+  let var_node = node.child_by_field_name("array").unwrap();
+  let var_name = evaluate_identifier(var_node, source)?; // get string name
+
+  // check if it exists in the stack
+  let Some(var) = ctx.search_in_stack(&var_name) else {
+    return Err(format!("Accessing undefined variable {:?}", node.range()));
+  };
+
+  // check that the variable is of type SamArray
+  let arr = match var {
+    Value::SamArray(arr) => arr,
+    _ => {
+      return Err(format!("Expected array for accessing {:?}", node.range()));
+    }
+  };
+
+  // check valid bounds
+  let index = match index {
+    x if x < 0 => {
+      return Err(format!(
+        "Index cannot be negative ({}) {:?}",
+        x,
+        node.range()
+      ));
+    }
+    x if x as usize >= arr.len() => {
+      return Err(format!(
+        "Index cannot be larger than the array length ({}) {:?}",
+        x,
+        node.range()
+      ));
+    }
+    _ => index as usize,
+  };
+
+  // access array based on index
+  let val = &arr[index];
+
+  Ok(val)
 }
 
 #[cfg(test)]
@@ -760,6 +836,37 @@ mod tests {
     assert_eq!(
       result.call_stack[0]["a"],
       Value::SamString("hello world".to_owned()),
+    );
+    assert_eq!(
+      result.call_stack[0]["b"],
+      Value::SamNumber(Number::SamInt(1)),
+    );
+  }
+
+  #[test]
+  fn test_array_access() {
+    let source = b"
+      let a = [1, 2, 3];
+      let b = a[0];
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+
+    let result = result.unwrap();
+
+    assert_eq!(
+      result.call_stack[0]["a"],
+      Value::SamArray(vec![
+        Value::SamNumber(Number::SamInt(1)),
+        Value::SamNumber(Number::SamInt(2)),
+        Value::SamNumber(Number::SamInt(3))
+      ]),
     );
     assert_eq!(
       result.call_stack[0]["b"],

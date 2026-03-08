@@ -6,17 +6,19 @@ use crate::value::Value;
 use std::collections::HashMap;
 
 // Variant for statements, allows for early return
-pub enum EvalControl {
+pub enum EvalControl<'a> {
   Value(Value),
   Return(Value),
+  Reference(&'a Value),
 }
 
-pub type EvalResult = Result<EvalControl, String>;
+pub type EvalResult<'a> = Result<EvalControl<'a>, String>;
 
-impl EvalControl {
+impl EvalControl<'_> {
   pub fn to_value(&self) -> Value {
     match self {
       EvalControl::Value(v) | EvalControl::Return(v) => v.clone(),
+      EvalControl::Reference(v) => (*v).clone(),
     }
   }
 }
