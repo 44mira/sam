@@ -10,6 +10,17 @@ use crate::{
   evaluate::evaluate_expression,
 };
 
+#[derive(Debug, PartialEq)]
+pub enum ValueType {
+  Number,
+  String,
+  LocalFunction,
+  ForeignFunction,
+  Object,
+  Array,
+  Undefined,
+}
+
 // TODO: Arrays
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -46,6 +57,18 @@ Value internal representation
 ========================= */
 
 impl Value {
+  pub fn get_type(&self) -> ValueType {
+    match self {
+      Value::SamNumber(_) => ValueType::Number,
+      Value::SamString(_) => ValueType::String,
+      Value::SamFunction(_) => ValueType::LocalFunction,
+      Value::SamForeignFunction(_) => ValueType::ForeignFunction,
+      Value::SamObject(_) => ValueType::Object,
+      Value::SamArray(_) => ValueType::Array,
+      Value::Undefined => ValueType::Undefined,
+    }
+  }
+
   pub fn get_attr(&self, node: &Node, key: &str) -> Result<Value, String> {
     match self {
       Value::SamObject(map) => {
@@ -505,5 +528,11 @@ mod tests {
   fn test_bool_into_value() {
     let v: Value = true.into();
     assert_eq!(v, Value::SamNumber(Number::SamInt(1)));
+  }
+
+  #[test]
+  fn test_get_type() {
+    let v = Value::SamNumber(Number::SamInt(1));
+    assert_eq!(v.get_type(), ValueType::Number);
   }
 }
