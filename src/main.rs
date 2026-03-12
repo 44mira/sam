@@ -18,9 +18,11 @@ fn main() {
   parser.set_language(&language).unwrap();
 
   let text = r#"
-let a = ["hello", "world"];
-for b in a {
-  ls();
+let a = [1, 2, 3];
+let b = 0;
+
+for c in a {
+  b = b + c;
 };
   "#;
 

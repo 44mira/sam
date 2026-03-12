@@ -996,4 +996,31 @@ mod tests {
       Value::SamForeignFunction(ForeignFunction::new("echo 42".to_owned()))
     );
   }
+
+  #[test]
+  fn test_for_loop() {
+    let source = b"
+      let a = [1, 2, 3];
+      let b = 0;
+
+      for c in a {
+        b = b + c;
+      };
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+
+    let result = result.unwrap();
+
+    assert_eq!(
+      result.call_stack[0]["b"],
+      Value::SamNumber(Number::SamInt(6))
+    );
+  }
 }
