@@ -169,6 +169,8 @@ pub fn evaluate_expression<'a>(
       Ok(EvalControl::Reference(v))
     }
 
+    "for_expression" => evaluate_for_expression(node, ctx, source),
+
     _ => Err(format!("Unknown expression {:?}", node.range())),
   }
 }
@@ -368,6 +370,58 @@ fn evaluate_if_expression<'a>(
 }
 
 /* =========================
+For expression
+========================= */
+
+fn evaluate_for_expression<'a>(
+  node: Node,
+  ctx: &'a mut Context,
+  source: &[u8],
+) -> EvalResult<'a> {
+  expect_node(&node, "for_expression", "Expected for expression")?;
+
+  // extract iterable
+  let arr_node = node.child_by_field_name("iterable").unwrap();
+
+  // clone the iterable to loop
+  // (might be a performance bottleneck but it guarantees idempotence)
+  let Value::SamArray(arr) =
+    evaluate_expression(arr_node, ctx, source)?.to_value()
+  else {
+    return Err(format!(
+      "Expected array type in for loop {:?}",
+      arr_node.range()
+    ));
+  };
+
+  // get variable name
+  let var_node = node.child_by_field_name("variable").unwrap();
+  let name = evaluate_identifier(var_node, source)?;
+
+  let body_node = node.child_by_field_name("body").unwrap();
+
+  // loop over the iterable, binding the current value to 'name'
+  for v in arr {
+    let iteration = evaluate_statement_block(
+      body_node,
+      ctx,
+      source,
+      Some(vec![(name.to_owned(), v)]),
+    )?;
+
+    // check for return
+    match iteration {
+      EvalControl::Return(r) => {
+        return Ok(EvalControl::Return(r));
+      }
+      _ => {}
+    }
+  }
+
+  return Ok(EvalControl::Value(Value::Undefined));
+}
+
+/* =========================
 Lambda & Call
 ========================= */
 
@@ -408,9 +462,26 @@ fn evaluate_call_expression<'a>(
     args = Function::extract_args(args_node, ctx, source)?;
   }
 
-  let func = evaluate_expression(func_node, ctx, source)?.to_value();
+  // determine whether foreign or local function based on variable existence
+  match evaluate_expression(func_node, ctx, source) {
+    // if var found
+    Ok(f) => {
+      evaluate_local_function(f.to_value(), args, func_node, ctx, source)
+    }
 
-  if let Value::SamFunction(func) = func {
+    // if var not found
+    Err(_) => evaluate_foreign_function(args, func_node, ctx, source),
+  }
+}
+
+fn evaluate_local_function<'a>(
+  f: Value,
+  args: Vec<Value>,
+  node: Node,
+  ctx: &'a mut Context,
+  source: &[u8],
+) -> EvalResult<'a> {
+  if let Value::SamFunction(func) = f {
     if args.len() != func.params.len() {
       return Err(format!("Argument count mismatch {:?}", node.range()));
     }
@@ -426,6 +497,15 @@ fn evaluate_call_expression<'a>(
     return evaluate_statement_block(body, ctx, source, Some(bindings));
   }
 
+  return Err(format!("Expected function type {:?}", node.range()));
+}
+
+fn evaluate_foreign_function<'a>(
+  args: Vec<Value>,
+  func_node: Node,
+  ctx: &'a mut Context,
+  source: &[u8],
+) -> EvalResult<'a> {
   // Otherwise: shell fallback
   let command_name = match func_node.kind() {
     "identifier" => evaluate_identifier(func_node, source)?,
@@ -750,6 +830,21 @@ mod tests {
 
     let result = evaluate(&root, source, &tree);
     assert!(!result.is_ok());
+  }
+
+  #[test]
+  fn test_shell_fn() {
+    let source = b"
+      let a = ls();
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
   }
 
   #[test]

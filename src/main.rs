@@ -18,7 +18,10 @@ fn main() {
   parser.set_language(&language).unwrap();
 
   let text = r#"
-    let b = ls("-la");
+let a = ["hello", "world"];
+for b in a {
+  ls();
+};
   "#;
 
   let tree = parser.parse(text, None).unwrap();
