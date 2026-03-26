@@ -137,14 +137,16 @@ impl Function {
     let mut walker = node.walk();
 
     for arg in node.named_children(&mut walker) {
-      let EvalControl::Value(val) = evaluate_expression(arg, ctx, source)?
-      else {
-        return Err(format!(
-          "Unexpected return expression. {:#?}",
-          node.range()
-        ));
-      };
-      args.push(val);
+      match evaluate_expression(arg, ctx, source)? {
+        EvalControl::Value(a) => args.push(a),
+        EvalControl::Reference(a) => args.push(a.clone()),
+        _ => {
+          return Err(format!(
+            "Unexpected return expression. {:#?}",
+            node.range()
+          ));
+        }
+      }
     }
 
     Ok(args)

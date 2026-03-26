@@ -18,12 +18,9 @@ fn main() {
   parser.set_language(&language).unwrap();
 
   let text = r#"
-let a = [1, 2, 3];
-let b = 0;
-
-for c in a {
-  b = b + c;
-};
+let a = ls();
+let b = a.stdout;
+let c = wc("-l", b);
   "#;
 
   let tree = parser.parse(text, None).unwrap();
@@ -31,5 +28,8 @@ for c in a {
 
   let ctx = evaluate(&root, text.as_bytes(), &tree);
 
-  println!("{:#?}", ctx);
+  match ctx {
+    Err(e) => println!("{:#?}", e),
+    Ok(a) => println!("{:#?}", a),
+  }
 }
