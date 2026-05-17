@@ -5,6 +5,7 @@ use std::fmt;
 use std::ops::{Range, *};
 use tree_sitter::Node;
 
+use crate::ffi::{FFI, Shell};
 use crate::{
   context::{Context, EvalControl},
   evaluate::evaluate_expression,
@@ -43,15 +44,29 @@ pub enum PartialArg {
 }
 
 #[derive(Debug, Clone)]
+pub enum FuncType {
+  Local(Function),
+  Foreign(ForeignFunction),
+  Partial(PartialFunction),
+  Shell(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct PartialFunction {
-  pub func: Function,
-  pub arg: Vec<PartialArg>,
+  pub func: Box<FuncType>,
+  pub args: Vec<PartialArg>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Number {
   SamInt(i64),
   SamFloat(f64),
+}
+
+pub trait Callable {
+  type ArgType;
+
+  fn call(&self, args: &Self::ArgType) -> Result<Value, String>;
 }
 
 /* =========================
@@ -169,6 +184,73 @@ impl Function {
 impl ForeignFunction {
   pub fn new(cmd: String) -> Self {
     return ForeignFunction { cmd };
+  }
+}
+
+/* =========================
+Partial Function internal representation
+========================= */
+
+impl PartialFunction {
+  pub fn new(func: FuncType, args: Vec<PartialArg>) -> Self {
+    return PartialFunction {
+      func: Box::new(func),
+      args,
+    };
+  }
+
+  pub fn extract_args(
+    node: Node,
+    ctx: &mut Context,
+    source: &[u8],
+  ) -> Result<Vec<PartialArg>, String> {
+    let mut args = Vec::new();
+    let mut walker = node.walk();
+
+    for arg in node.named_children(&mut walker) {
+      // check for placeholder arg
+      if arg.kind() == "placeholder" {
+        args.push(PartialArg::Placeholder);
+        continue;
+      }
+
+      // normal value argument extraction
+      let v = match evaluate_expression(arg, ctx, source)? {
+        EvalControl::Value(a) => a,
+        EvalControl::Reference(a) => a.clone(),
+        _ => {
+          return Err(format!(
+            "Unexpected return expression. {:#?}",
+            node.range()
+          ));
+        }
+      };
+
+      args.push(PartialArg::Value(v));
+    }
+
+    Ok(args)
+  }
+}
+
+/* =========================
+Callable impl
+========================= */
+
+impl Callable for ForeignFunction {
+  type ArgType = Vec<Value>;
+
+  fn call(&self, args: &Self::ArgType) -> Result<Value, String> {
+    FFI::call(&self, &args)
+  }
+}
+
+// Shell calls
+impl Callable for String {
+  type ArgType = Vec<Value>;
+
+  fn call(&self, args: &Self::ArgType) -> Result<Value, String> {
+    Shell::call(&self, args)
   }
 }
 

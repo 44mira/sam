@@ -1,8 +1,11 @@
 #![allow(dead_code, unused_imports)]
 
 use crate::context::{Context, EvalControl, EvalResult};
-use crate::ffi::{FFI, Shell};
-use crate::value::{ForeignFunction, Function, Number, Value};
+use crate::ffi::FFI;
+use crate::value::{
+  Callable, ForeignFunction, FuncType, Function, Number, PartialArg,
+  PartialFunction, Value,
+};
 use tree_sitter::{Node, Tree};
 
 fn expect_node(
@@ -497,11 +500,23 @@ fn evaluate_local_function<'a>(
 
       return evaluate_statement_block(body, ctx, source, Some(bindings));
     }
+
     Value::SamForeignFunction(func) => {
-      let result = FFI::call(&func, &args)?;
+      let result = func.call(&args)?;
       return Ok(EvalControl::Value(result));
     }
 
+    // TODO: partial function helper
+    // Value::SamPartialFunction(_) => {
+    //   // if args.len() != 1 {
+    //   //   return Err(format!(
+    //   //     "Partial function expects 1 argument {:?}",
+    //   //     node.range()
+    //   //   ));
+    //   // }
+    //   // let result = PartialFunction::call(&args[0])?;
+    //   // return Ok(EvalControl::Value(result));
+    // }
     _ => {
       return Err(format!("Expected function value {:?}", node.range()));
     }
@@ -520,8 +535,65 @@ fn evaluate_foreign_function<'a>(
     _ => return Err(format!("Invalid shell command {:?}", func_node.range())),
   };
 
-  let result = Shell::call(&command_name, args)?;
+  let result = command_name.call(&args)?;
   return Ok(EvalControl::Value(result));
+}
+
+fn evaluate_partial_expression<'a>(
+  node: Node,
+  ctx: &'a mut Context,
+  source: &[u8],
+) -> EvalResult<'a> {
+  expect_node(&node, "partial_expression", "Expected partial expression")?;
+
+  let func_node = node.child_by_field_name("function").unwrap();
+  let args_node = node.child_by_field_name("arguments").unwrap();
+
+  // extract arguments ========================================================
+  let args = evaluate_partial_expression_args(args_node, ctx, source)?;
+
+  // extract function =========================================================
+  let partial_func;
+
+  // if valid function type
+  if let Ok(func) = evaluate_expression(func_node, ctx, source) {
+    match func.to_value() {
+      Value::SamFunction(f) => partial_func = FuncType::Local(f),
+      Value::SamForeignFunction(f) => partial_func = FuncType::Foreign(f),
+      Value::SamPartialFunction(f) => partial_func = FuncType::Partial(f),
+      _ => return Err(format!("Expected function type. {:?}", node.range())),
+    }
+  // if shell command
+  } else {
+    let command_name = match func_node.kind() {
+      "identifier" => evaluate_identifier(func_node, source)?,
+      _ => {
+        return Err(format!("Invalid shell command {:?}", func_node.range()));
+      }
+    };
+    partial_func = FuncType::Shell(command_name);
+  }
+
+  // form PartialFunction =====================================================
+
+  let pfunc = PartialFunction::new(partial_func, args);
+
+  return Ok(EvalControl::Value(Value::SamPartialFunction(pfunc)));
+}
+
+fn evaluate_partial_expression_args<'a>(
+  args_node: Node,
+  ctx: &'a mut Context,
+  source: &[u8],
+) -> Result<Vec<PartialArg>, String> {
+  expect_node(
+    &args_node,
+    "partial_expression_args",
+    "Expected partial expression arguments",
+  )?;
+
+  let args = PartialFunction::extract_args(args_node, ctx, source);
+  return args;
 }
 
 /* =========================

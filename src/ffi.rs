@@ -11,7 +11,7 @@ pub struct Shell;
 pub struct FFI;
 
 impl Shell {
-  pub fn call(name: &str, args: Vec<Value>) -> Result<Value, String> {
+  pub fn call(name: &str, args: &Vec<Value>) -> Result<Value, String> {
     // fallback shell call
     let mut cmd = Command::new(name);
 
