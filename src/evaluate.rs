@@ -316,16 +316,19 @@ fn evaluate_nested_identifier<'a>(
     .child_by_field_name("name")
     .ok_or("Missing name in nested_identifier")?;
 
-  let EvalControl::Reference(r) =
-    evaluate_expression(parent_node, ctx, source)?
-  else {
-    return Err(format!("Expected identifier {:?}", node.range()));
-  };
-
   let key = name_node.utf8_text(source).map_err(|e| e.to_string())?;
 
-  let val = r.get_attr(&node, key)?;
-  return Ok(EvalControl::Reference(val));
+  match evaluate_expression(parent_node, ctx, source)? {
+    EvalControl::Reference(r) => {
+      let val = r.get_attr(&node, key)?;
+      return Ok(EvalControl::Reference(val));
+    }
+    EvalControl::Value(v) => {
+      let val = v.get_attr(&node, key)?;
+      return Ok(EvalControl::Value(val.to_owned()));
+    }
+    _ => return Err(format!("Expected identifier {:?}", node.range())),
+  }
 }
 
 /* =========================
@@ -488,8 +491,8 @@ fn evaluate_local_function<'a>(
 ) -> EvalResult<'a> {
   match f {
     Value::SamFunction(func) => {
-      let result = func.call(&args, Some(node), Some(ctx), Some(source));
-      return result;
+      let result = func.call(&args, Some(node), Some(ctx), Some(source))?;
+      return Ok(EvalControl::Value(result));
     }
 
     Value::SamForeignFunction(func) => {
@@ -497,18 +500,11 @@ fn evaluate_local_function<'a>(
       return Ok(EvalControl::Value(result));
     }
 
-    // TODO: partial function helper
-    //
-    // Value::SamPartialFunction(_) => {
-    //   // if args.len() != 1 {
-    //   //   return Err(format!(
-    //   //     "Partial function expects 1 argument {:?}",
-    //   //     node.range()
-    //   //   ));
-    //   // }
-    //   // let result = PartialFunction::call(&args[0])?;
-    //   // return Ok(EvalControl::Value(result));
-    // }
+    Value::SamPartialFunction(func) => {
+      let result = func.call(&args, Some(node), Some(ctx), Some(source))?;
+      return Ok(EvalControl::Value(result));
+    }
+
     _ => {
       return Err(format!("Expected function value {:?}", node.range()));
     }
@@ -1127,7 +1123,7 @@ mod tests {
   #[test]
   fn test_partial_function_shell() {
     let source = b"
-      let a = echo('Hello ', @);
+      let a = echo('-n', 'Hello', @);
       let b = a('Mira').stdout;
     ";
 
@@ -1137,11 +1133,12 @@ mod tests {
     let root = tree.root_node();
 
     let result = evaluate(&root, source, &tree);
-    assert!(result.is_ok());
+    println!("{:?}", result);
 
-    assert_eq!(
-      result.unwrap().global_scope()["b"],
-      Value::SamString("Hello Mira".to_owned()),
-    );
+    assert!(result.is_ok());
+    let mut result = result.unwrap();
+    let env = result.global_scope();
+
+    assert_eq!(env["b"], Value::SamString("Hello Mira".to_owned()),);
   }
 }

@@ -12,7 +12,6 @@ use crate::{
   evaluate::evaluate_expression,
 };
 
-// TODO: Arrays
 #[derive(Debug, Clone)]
 pub enum Value {
   SamNumber(Number),
@@ -65,16 +64,13 @@ pub enum Number {
 }
 
 pub trait Callable {
-  type ArgType;
-  type ReturnType<'a>;
-
   fn call<'a>(
     &self,
-    args: &Self::ArgType,
+    args: &Vec<Value>,
     node: Option<Node>,
-    ctx: Option<&'a mut Context>,
-    source: Option<&'a [u8]>,
-  ) -> Result<Self::ReturnType<'a>, String>;
+    ctx: Option<&mut Context>,
+    source: Option<&[u8]>,
+  ) -> Result<Value, String>;
 }
 
 /* =========================
@@ -246,16 +242,13 @@ Callable impl
 ========================= */
 
 impl Callable for Function {
-  type ArgType = Vec<Value>;
-  type ReturnType<'a> = EvalControl<'a>;
-
   fn call<'a>(
     &self,
-    args: &Self::ArgType,
+    args: &Vec<Value>,
     node: Option<Node>,
-    ctx: Option<&'a mut Context>,
-    source: Option<&'a [u8]>,
-  ) -> Result<Self::ReturnType<'a>, String> {
+    ctx: Option<&mut Context>,
+    source: Option<&[u8]>,
+  ) -> Result<Value, String> {
     let ctx = ctx.unwrap();
     let source = source.unwrap();
     let node = node.unwrap();
@@ -277,38 +270,89 @@ impl Callable for Function {
       .descendant_for_byte_range(self.body.start, self.body.end)
       .ok_or("Function body not found")?;
 
-    return evaluate_statement_block(body, ctx, source, Some(bindings));
+    let result = evaluate_statement_block(body, ctx, source, Some(bindings))
+      .map(|x| x.to_value());
+
+    return result;
   }
 }
 
 impl Callable for ForeignFunction {
-  type ArgType = Vec<Value>;
-  type ReturnType<'a> = Value;
-
   fn call<'a>(
     &self,
-    args: &Self::ArgType,
+    args: &Vec<Value>,
     _node: Option<Node>,
-    _ctx: Option<&'a mut Context>,
-    _source: Option<&'a [u8]>,
-  ) -> Result<Self::ReturnType<'a>, String> {
+    _ctx: Option<&mut Context>,
+    _source: Option<&[u8]>,
+  ) -> Result<Value, String> {
     FFI::call(&self, &args)
   }
 }
 
 // Shell calls
 impl Callable for String {
-  type ArgType = Vec<Value>;
-  type ReturnType<'a> = Value;
-
   fn call<'a>(
     &self,
-    args: &Self::ArgType,
+    args: &Vec<Value>,
     _node: Option<Node>,
-    _ctx: Option<&'a mut Context>,
-    _source: Option<&'a [u8]>,
-  ) -> Result<Self::ReturnType<'a>, String> {
+    _ctx: Option<&mut Context>,
+    _source: Option<&[u8]>,
+  ) -> Result<Value, String> {
     Shell::call(&self, args)
+  }
+}
+
+impl Callable for PartialFunction {
+  fn call<'a>(
+    &self,
+    args: &Vec<Value>,
+    node: Option<Node>,
+    ctx: Option<&mut Context>,
+    source: Option<&[u8]>,
+  ) -> Result<Value, String> {
+    let node = node.unwrap();
+
+    if args.len() != 1 {
+      return Err(format!(
+        "Partial function expects 1 argument {:?}",
+        node.range()
+      ));
+    };
+    let arg = args[0].clone();
+
+    // map all values to themselves, and placeholders to the arg
+
+    let applied_args = self
+      .args
+      .iter()
+      .cloned()
+      .map(|x| match x {
+        PartialArg::Value(v) => v,
+        PartialArg::Placeholder => arg.clone(),
+      })
+      .collect();
+
+    return self
+      .func
+      .deref()
+      .call(&applied_args, Some(node), ctx, source);
+  }
+}
+
+impl Callable for FuncType {
+  fn call<'a>(
+    &self,
+    args: &Vec<Value>,
+    node: Option<Node>,
+    ctx: Option<&mut Context>,
+    source: Option<&[u8]>,
+  ) -> Result<Value, String> {
+    match self {
+      FuncType::Local(f) => f.call(args, node, ctx, source),
+      FuncType::Foreign(f) => f.call(args, node, ctx, source),
+      FuncType::Partial(f) => f.call(args, node, ctx, source),
+      FuncType::Shell(f) => f.call(args, node, ctx, source),
+    }
   }
 }
 
