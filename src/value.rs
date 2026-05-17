@@ -5,6 +5,7 @@ use std::fmt;
 use std::ops::{Range, *};
 use tree_sitter::Node;
 
+use crate::evaluate::evaluate_statement_block;
 use crate::ffi::{FFI, Shell};
 use crate::{
   context::{Context, EvalControl},
@@ -65,8 +66,15 @@ pub enum Number {
 
 pub trait Callable {
   type ArgType;
+  type ReturnType<'a>;
 
-  fn call(&self, args: &Self::ArgType) -> Result<Value, String>;
+  fn call<'a>(
+    &self,
+    args: &Self::ArgType,
+    node: Option<Node>,
+    ctx: Option<&'a mut Context>,
+    source: Option<&'a [u8]>,
+  ) -> Result<Self::ReturnType<'a>, String>;
 }
 
 /* =========================
@@ -237,10 +245,53 @@ impl PartialFunction {
 Callable impl
 ========================= */
 
+impl Callable for Function {
+  type ArgType = Vec<Value>;
+  type ReturnType<'a> = EvalControl<'a>;
+
+  fn call<'a>(
+    &self,
+    args: &Self::ArgType,
+    node: Option<Node>,
+    ctx: Option<&'a mut Context>,
+    source: Option<&'a [u8]>,
+  ) -> Result<Self::ReturnType<'a>, String> {
+    let ctx = ctx.unwrap();
+    let source = source.unwrap();
+    let node = node.unwrap();
+
+    if args.len() != self.params.len() {
+      return Err(format!("Argument count mismatch {:?}", node.range()));
+    }
+
+    let bindings = self
+      .params
+      .iter()
+      .cloned()
+      .zip(args.iter().cloned())
+      .collect();
+
+    let body = ctx
+      .tree
+      .root_node()
+      .descendant_for_byte_range(self.body.start, self.body.end)
+      .ok_or("Function body not found")?;
+
+    return evaluate_statement_block(body, ctx, source, Some(bindings));
+  }
+}
+
 impl Callable for ForeignFunction {
   type ArgType = Vec<Value>;
+  type ReturnType<'a> = Value;
 
-  fn call(&self, args: &Self::ArgType) -> Result<Value, String> {
+  fn call<'a>(
+    &self,
+    args: &Self::ArgType,
+    _node: Option<Node>,
+    _ctx: Option<&'a mut Context>,
+    _source: Option<&'a [u8]>,
+  ) -> Result<Self::ReturnType<'a>, String> {
     FFI::call(&self, &args)
   }
 }
@@ -248,8 +299,15 @@ impl Callable for ForeignFunction {
 // Shell calls
 impl Callable for String {
   type ArgType = Vec<Value>;
+  type ReturnType<'a> = Value;
 
-  fn call(&self, args: &Self::ArgType) -> Result<Value, String> {
+  fn call<'a>(
+    &self,
+    args: &Self::ArgType,
+    _node: Option<Node>,
+    _ctx: Option<&'a mut Context>,
+    _source: Option<&'a [u8]>,
+  ) -> Result<Self::ReturnType<'a>, String> {
     Shell::call(&self, args)
   }
 }

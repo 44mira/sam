@@ -98,7 +98,7 @@ Statements
 fn evaluate_statement<'a>(
   node: Node,
   ctx: &'a mut Context,
-  source: &[u8],
+  source: &'a [u8],
 ) -> EvalResult<'a> {
   match node.kind() {
     "expression_statement" => {
@@ -129,7 +129,7 @@ Expressions
 pub fn evaluate_expression<'a>(
   node: Node,
   ctx: &'a mut Context,
-  source: &[u8],
+  source: &'a [u8],
 ) -> EvalResult<'a> {
   match node.kind() {
     "literal" => Ok(EvalControl::Value(evaluate_literal(node, source)?)),
@@ -171,6 +171,8 @@ pub fn evaluate_expression<'a>(
       let v = evaluate_array_access_expression(node, ctx, source)?;
       Ok(EvalControl::Reference(v))
     }
+
+    "partial_expression" => evaluate_partial_expression(node, ctx, source),
 
     "for_expression" => evaluate_for_expression(node, ctx, source),
 
@@ -304,7 +306,7 @@ Attribute access
 fn evaluate_nested_identifier<'a>(
   node: Node,
   ctx: &'a mut Context,
-  source: &[u8],
+  source: &'a [u8],
 ) -> EvalResult<'a> {
   let parent_node = node
     .child_by_field_name("parent")
@@ -452,7 +454,7 @@ fn evaluate_lambda_expression(
 fn evaluate_call_expression<'a>(
   node: Node,
   ctx: &'a mut Context,
-  source: &[u8],
+  source: &'a [u8],
 ) -> EvalResult<'a> {
   expect_node(&node, "call_expression", "Expected call")?;
 
@@ -482,31 +484,21 @@ fn evaluate_local_function<'a>(
   args: Vec<Value>,
   node: Node,
   ctx: &'a mut Context,
-  source: &[u8],
+  source: &'a [u8],
 ) -> EvalResult<'a> {
   match f {
     Value::SamFunction(func) => {
-      if args.len() != func.params.len() {
-        return Err(format!("Argument count mismatch {:?}", node.range()));
-      }
-
-      let bindings = func.params.iter().cloned().zip(args).collect();
-
-      let body = ctx
-        .tree
-        .root_node()
-        .descendant_for_byte_range(func.body.start, func.body.end)
-        .ok_or("Function body not found")?;
-
-      return evaluate_statement_block(body, ctx, source, Some(bindings));
+      let result = func.call(&args, Some(node), Some(ctx), Some(source));
+      return result;
     }
 
     Value::SamForeignFunction(func) => {
-      let result = func.call(&args)?;
+      let result = func.call(&args, None, None, None)?;
       return Ok(EvalControl::Value(result));
     }
 
     // TODO: partial function helper
+    //
     // Value::SamPartialFunction(_) => {
     //   // if args.len() != 1 {
     //   //   return Err(format!(
@@ -535,7 +527,7 @@ fn evaluate_foreign_function<'a>(
     _ => return Err(format!("Invalid shell command {:?}", func_node.range())),
   };
 
-  let result = command_name.call(&args)?;
+  let result = command_name.call(&args, None, None, None)?;
   return Ok(EvalControl::Value(result));
 }
 
@@ -600,7 +592,7 @@ fn evaluate_partial_expression_args<'a>(
 Statement block
 ========================= */
 
-fn evaluate_statement_block<'a>(
+pub fn evaluate_statement_block<'a>(
   node: Node,
   ctx: &'a mut Context,
   source: &[u8],
