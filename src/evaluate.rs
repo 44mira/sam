@@ -1092,4 +1092,56 @@ mod tests {
       Value::SamNumber(Number::SamInt(6))
     );
   }
+
+  #[test]
+  fn test_partial_function_local() {
+    let source = b"
+        let f = (a, b) => { return a + b; };
+        let g = f(@, 3);
+        let h = f(4, @);
+        let i = f(@, @);
+
+        let a = g(3);
+        let b = h(3);
+        let c = i(4);
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+
+    let mut result = result.unwrap();
+    let env = result.global_scope();
+
+    assert_eq!(env["a"], Value::SamNumber(Number::SamInt(6)));
+
+    assert_eq!(env["b"], Value::SamNumber(Number::SamInt(7)));
+
+    assert_eq!(env["c"], Value::SamNumber(Number::SamInt(8)));
+  }
+
+  #[test]
+  fn test_partial_function_shell() {
+    let source = b"
+      let a = echo('Hello ', @);
+      let b = a('Mira').stdout;
+    ";
+
+    let mut parser = get_parser();
+    let tree = parser.parse(source, None).unwrap();
+
+    let root = tree.root_node();
+
+    let result = evaluate(&root, source, &tree);
+    assert!(result.is_ok());
+
+    assert_eq!(
+      result.unwrap().global_scope()["b"],
+      Value::SamString("Hello Mira".to_owned()),
+    );
+  }
 }
