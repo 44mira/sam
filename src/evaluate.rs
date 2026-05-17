@@ -481,29 +481,37 @@ fn evaluate_local_function<'a>(
   ctx: &'a mut Context,
   source: &[u8],
 ) -> EvalResult<'a> {
-  if let Value::SamFunction(func) = f {
-    if args.len() != func.params.len() {
-      return Err(format!("Argument count mismatch {:?}", node.range()));
+  match f {
+    Value::SamFunction(func) => {
+      if args.len() != func.params.len() {
+        return Err(format!("Argument count mismatch {:?}", node.range()));
+      }
+
+      let bindings = func.params.iter().cloned().zip(args).collect();
+
+      let body = ctx
+        .tree
+        .root_node()
+        .descendant_for_byte_range(func.body.start, func.body.end)
+        .ok_or("Function body not found")?;
+
+      return evaluate_statement_block(body, ctx, source, Some(bindings));
+    }
+    Value::SamForeignFunction(func) => {
+      let result = FFI::call(&func, &args)?;
+      return Ok(EvalControl::Value(result));
     }
 
-    let bindings = func.params.iter().cloned().zip(args).collect();
-
-    let body = ctx
-      .tree
-      .root_node()
-      .descendant_for_byte_range(func.body.start, func.body.end)
-      .ok_or("Function body not found")?;
-
-    return evaluate_statement_block(body, ctx, source, Some(bindings));
+    _ => {
+      return Err(format!("Expected function value {:?}", node.range()));
+    }
   }
-
-  return Err(format!("Expected function type {:?}", node.range()));
 }
 
 fn evaluate_foreign_function<'a>(
   args: Vec<Value>,
   func_node: Node,
-  ctx: &'a mut Context,
+  _ctx: &'a mut Context,
   source: &[u8],
 ) -> EvalResult<'a> {
   // Otherwise: shell fallback
@@ -512,17 +520,7 @@ fn evaluate_foreign_function<'a>(
     _ => return Err(format!("Invalid shell command {:?}", func_node.range())),
   };
 
-  let result;
-
-  // check for FFI or Shell command
-  if let Some(Value::SamForeignFunction(ff)) =
-    ctx.global_scope().get(&command_name)
-  {
-    result = FFI::call(ff, &args)?;
-  } else {
-    result = Shell::call(&command_name, args)?;
-  }
-
+  let result = Shell::call(&command_name, args)?;
   return Ok(EvalControl::Value(result));
 }
 
@@ -978,6 +976,8 @@ mod tests {
 
     let source = b"
     interface '/tmp/foo.json' load bar;
+
+    let a = bar();
     ";
 
     let mut parser = get_parser();
@@ -994,6 +994,11 @@ mod tests {
     assert_eq!(
       result.global_scope()["bar"],
       Value::SamForeignFunction(ForeignFunction::new("echo 42".to_owned()))
+    );
+
+    assert_eq!(
+      result.global_scope()["a"],
+      Value::SamNumber(Number::SamInt(42))
     );
   }
 
