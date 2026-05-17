@@ -18,9 +18,8 @@ fn main() {
   parser.set_language(&language).unwrap();
 
   let text = r#"
-let a = ls();
-let b = a.stdout;
-let c = wc("-l", b);
+let c = echo("-n", 23);
+let b = c.stdout;
   "#;
 
   let tree = parser.parse(text, None).unwrap();

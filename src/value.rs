@@ -17,6 +17,7 @@ pub enum Value {
   // byte range of function for lazy evaluation
   SamFunction(Function),
   SamForeignFunction(ForeignFunction),
+  SamPartialFunction(PartialFunction),
   SamString(String),
   SamObject(HashMap<String, Value>),
   SamArray(Vec<Value>),
@@ -33,6 +34,18 @@ pub struct Function {
 #[derive(Debug, Clone)]
 pub struct ForeignFunction {
   pub cmd: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum PartialArg {
+  Value(Value),
+  Placeholder,
+}
+
+#[derive(Debug, Clone)]
+pub struct PartialFunction {
+  pub func: Function,
+  pub arg: Vec<PartialArg>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -383,6 +396,8 @@ impl fmt::Display for Value {
       Value::SamFunction(_) => write!(f, "<function>"),
 
       Value::SamForeignFunction(_) => write!(f, "<foreign-function>"),
+
+      Value::SamPartialFunction(_) => write!(f, "<partial-function>"),
 
       Value::SamArray(a) => write!(f, "{:#?}", a),
 
